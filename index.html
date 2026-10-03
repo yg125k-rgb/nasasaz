@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>한글 모아모아 퍼즐 솔버</title>
+    <title>한글 모아모아 퍼즐 솔버 - 고득점 엔진</title>
 
     <!-- React 18 & ReactDOM -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
@@ -53,7 +53,6 @@
     <script type="text/babel">
       const { useState, useCallback } = React;
 
-      // 이미지 원본 카드 도트 구조 100% 정밀 적용
       const INITIAL_BLOCK_TEMPLATES = [
         { id: 1, name: '1칸', size: 1, shape: [[1]] },
         { id: 2, name: '3칸', size: 3, shape: [[0, 1, 0], [1, 0, 1]] },
@@ -71,7 +70,6 @@
         { id: 14, name: '8칸', size: 8, shape: [[1, 1, 1], [1, 0, 1], [1, 1, 1]] },
         { id: 15, name: '8칸', size: 8, shape: [[1, 1], [0, 1], [1, 1], [1, 0], [1, 1]] },
         { id: 16, name: '8칸', size: 8, shape: [[1, 1], [1, 0], [1, 1], [1, 0], [1, 1]] },
-        // [정확 수정] 9칸 원본 도트 구조 (3행: 2, 4번째 칸)
         { id: 17, name: '9칸', size: 9, shape: [[0, 0, 1, 0, 0], [1, 1, 1, 1, 1], [0, 1, 0, 1, 0], [0, 0, 1, 0, 0]] },
         { id: 18, name: '10칸', size: 10, shape: [[1, 0, 1], [1, 1, 1], [1, 0, 1], [1, 1, 1]] },
         { id: 19, name: '10칸', size: 10, shape: [[1, 0, 1], [1, 1, 1], [1, 1, 1], [1, 0, 1]] }
@@ -116,6 +114,21 @@
           current = rotateMatrix(current);
         }
         return orientations;
+      };
+
+      // 순열 생성 (3개 블록의 가능한 모든 순서)
+      const getPermutations = (arr) => {
+        if (arr.length <= 1) return [arr];
+        const result = [];
+        for (let i = 0; i < arr.length; i++) {
+          const current = arr[i];
+          const remaining = arr.slice(0, i).concat(arr.slice(i + 1));
+          const permuted = getPermutations(remaining);
+          for (const p of permuted) {
+            result.push([current, ...p]);
+          }
+        }
+        return result;
       };
 
       function App() {
@@ -166,15 +179,12 @@
             setMessage('수동 점 버튼이 꺼져 있습니다.');
             return;
           }
-
           saveHistory();
-
           setBoard(prevBoard => {
             const nextBoard = [...prevBoard];
             nextBoard[index] = nextBoard[index] !== 0 ? 0 : 1;
             return nextBoard;
           });
-
           setLastPlacedIndices(prev => prev.filter(i => i !== index));
         };
 
@@ -203,17 +213,14 @@
         const handleSelectBlock = (id) => {
           setSelectedBlockIds(prev => {
             const count = prev.filter(bId => bId === id).length;
-
             if (count > 0 && (prev.length >= 3 || count >= 2)) {
               const lastIdx = prev.lastIndexOf(id);
               setMessage('선택된 블록 1개가 취소되었습니다.');
               return prev.filter((_, idx) => idx !== lastIdx);
             }
-
             if (prev.length < 3) {
               return [...prev, id];
             }
-
             setMessage('블록은 최대 3개까지만 선택할 수 있습니다.');
             return prev;
           });
@@ -224,6 +231,7 @@
           setSelectedBlockIds(prev => prev.filter((_, idx) => idx !== index));
         };
 
+        // --- 고득점 알고리즘 핵심 시뮬레이터 ---
         const handleAutoPlace = useCallback(() => {
           if (selectedBlockIds.length === 0) {
             setMessage('배치할 블록을 1개 이상 선택해 주세요.');
@@ -235,20 +243,12 @@
 
           setTimeout(() => {
             try {
-              let workingBoard = [...board];
-              let totalClearedLines = 0;
-              let successfullyPlaced = 0;
-              let newPlacedIndices = [];
-              let ghostOverlayMap = {};
-              let stepReports = [];
-
-              const chosenBlocks = selectedBlockIds
+              const inputBlocks = selectedBlockIds
                 .map(id => {
                   const tmpl = blocks.find(b => b.id === id);
                   return tmpl ? { ...tmpl, shape: tmpl.shape.map(r => [...r]) } : null;
                 })
-                .filter(Boolean)
-                .sort((a, b) => b.size - a.size);
+                .filter(Boolean);
 
               const canPlace = (grid, shape, startR, startC) => {
                 const h = shape.length;
@@ -265,9 +265,60 @@
                 return true;
               };
 
-              const evaluateAndSimulate = (grid, shape, startR, startC, blockMarker) => {
-                const tempGrid = [...grid];
-                const placedCellIndices = [];
+              // 맵의 전체 상태 평가 함수 (Heuristic Evaluator)
+              const evaluateBoard = (grid) => {
+                let linesCleared = 0;
+                let holes = 0;
+                let aggregateHeight = 0;
+                let bumpiness = 0;
+                const colHeights = Array(BOARD_COLS).fill(0);
+
+                // 1. 지워진 줄 및 열 높이 계산
+                for (let r = 0; r < BOARD_ROWS; r++) {
+                  let full = true;
+                  for (let c = 0; c < BOARD_COLS; c++) {
+                    if (grid[r * BOARD_COLS + c] === 0) {
+                      full = false;
+                    } else {
+                      if (colHeights[c] === 0) {
+                        colHeights[c] = BOARD_ROWS - r;
+                      }
+                    }
+                  }
+                  if (full) linesCleared++;
+                }
+
+                // 2. 구멍(Holes) 및 높이 점수
+                for (let c = 0; c < BOARD_COLS; c++) {
+                  let blockFound = false;
+                  for (let r = 0; r < BOARD_ROWS; r++) {
+                    if (grid[r * BOARD_COLS + c] > 0) {
+                      blockFound = true;
+                    } else if (blockFound) {
+                      holes++;
+                    }
+                  }
+                  aggregateHeight += colHeights[c];
+                }
+
+                // 3. 바닥 면 울퉁불퉁함 (Bumpiness)
+                for (let c = 0; c < BOARD_COLS - 1; c++) {
+                  bumpiness += Math.abs(colHeights[c] - colHeights[c + 1]);
+                }
+
+                // 가중치 적용 (라인 제거 최대화, 구멍/높이 최소화)
+                const score = (linesCleared * 250) 
+                              - (holes * 45) 
+                              - (aggregateHeight * 3) 
+                              - (bumpiness * 4);
+
+                return { score, linesCleared };
+              };
+
+              // 블록 배치 실행 시뮬레이터
+              const applyMove = (grid, shape, startR, startC, marker) => {
+                const nextGrid = [...grid];
+                const placedIndices = [];
                 const h = shape.length;
                 const w = shape[0].length;
 
@@ -275,115 +326,133 @@
                   for (let c = 0; c < w; c++) {
                     if (shape[r][c] === 1) {
                       const idx = (startR + r) * BOARD_COLS + (startC + c);
-                      tempGrid[idx] = blockMarker;
-                      placedCellIndices.push(idx);
+                      nextGrid[idx] = marker;
+                      placedIndices.push(idx);
                     }
                   }
                 }
 
-                let cleared = 0;
-                const clearedRowIndices = new Set();
+                // 줄 삭제 처리
+                let clearedLines = 0;
+                const clearedRows = new Set();
                 for (let r = 0; r < BOARD_ROWS; r++) {
-                  let isFull = true;
+                  let full = true;
                   for (let c = 0; c < BOARD_COLS; c++) {
-                    if (tempGrid[r * BOARD_COLS + c] === 0) {
-                      isFull = false;
+                    if (nextGrid[r * BOARD_COLS + c] === 0) {
+                      full = false;
                       break;
                     }
                   }
-                  if (isFull) {
-                    cleared++;
-                    clearedRowIndices.add(r);
+                  if (full) {
+                    clearedLines++;
+                    clearedRows.add(r);
                   }
                 }
 
-                const nextGrid = [...tempGrid];
-                clearedRowIndices.forEach(r => {
-                  for (let c = 0; c < BOARD_COLS; c++) {
-                    nextGrid[r * BOARD_COLS + c] = 0;
-                  }
-                });
-
-                const finalPlacedIndices = placedCellIndices.filter(idx => {
-                  const r = Math.floor(idx / BOARD_COLS);
-                  return !clearedRowIndices.has(r);
-                });
-
-                let holes = 0;
-                let bottomDensity = 0;
-                for (let c = 0; c < BOARD_COLS; c++) {
-                  let blockFound = false;
-                  for (let r = 0; r < BOARD_ROWS; r++) {
-                    if (nextGrid[r * BOARD_COLS + c] > 0) {
-                      blockFound = true;
-                      bottomDensity += r;
-                    } else if (blockFound && nextGrid[r * BOARD_COLS + c] === 0) {
-                      holes++;
+                if (clearedLines > 0) {
+                  clearedRows.forEach(r => {
+                    for (let c = 0; c < BOARD_COLS; c++) {
+                      nextGrid[r * BOARD_COLS + c] = 0;
                     }
-                  }
+                  });
                 }
 
-                const score = (cleared * 10000) - (holes * 50) + bottomDensity + (startR * 10);
-                return { nextGrid, cleared, score, finalPlacedIndices, placedCellIndices, startR, startC, shape };
+                return { nextGrid, clearedLines, placedIndices };
               };
 
-              for (let i = 0; i < chosenBlocks.length; i++) {
-                const block = chosenBlocks[i];
-                const blockMarker = i + 2;
-                const orientations = getAllOrientations(block.shape);
-                let bestMove = null;
-                let maxScore = -999999;
+              // 3개 블록 순서 및 배치 완벽 조합 검색 (Multi-step Lookahead)
+              const permutations = getPermutations(inputBlocks);
+              let bestSequenceResult = null;
+              let maxTotalScore = -Infinity;
 
-                for (const shape of orientations) {
-                  for (let r = 0; r <= BOARD_ROWS - shape.length; r++) {
-                    for (let c = 0; c <= BOARD_COLS - shape[0].length; c++) {
-                      if (canPlace(workingBoard, shape, r, c)) {
-                        const res = evaluateAndSimulate(workingBoard, shape, r, c, blockMarker);
-                        if (res.score > maxScore) {
-                          maxScore = res.score;
-                          bestMove = res;
+              for (const blockOrder of permutations) {
+                // 재귀적 탐색을 통해 3개 블록 전체의 최적 수순 탐색
+                const searchCombination = (grid, index, currentSteps, accumScore, accumCleared) => {
+                  if (index >= blockOrder.length) {
+                    if (accumScore > maxTotalScore) {
+                      maxTotalScore = accumScore;
+                      bestSequenceResult = {
+                        steps: currentSteps,
+                        finalGrid: grid,
+                        totalCleared: accumCleared
+                      };
+                    }
+                    return;
+                  }
+
+                  const block = blockOrder[index];
+                  const orientations = getAllOrientations(block.shape);
+
+                  for (const shape of orientations) {
+                    for (let r = 0; r <= BOARD_ROWS - shape.length; r++) {
+                      for (let c = 0; c <= BOARD_COLS - shape[0].length; c++) {
+                        if (canPlace(grid, shape, r, c)) {
+                          const marker = index + 2;
+                          const { nextGrid, clearedLines, placedIndices } = applyMove(grid, shape, r, c, marker);
+                          const evalRes = evaluateBoard(nextGrid);
+                          
+                          const stepInfo = {
+                            order: index + 1,
+                            name: block.name,
+                            shape,
+                            row: r + 1,
+                            col: c + 1,
+                            placedIndices,
+                            marker,
+                            cleared: clearedLines
+                          };
+
+                          searchCombination(
+                            nextGrid, 
+                            index + 1, 
+                            [...currentSteps, stepInfo], 
+                            accumScore + evalRes.score + (clearedLines * 1000), 
+                            accumCleared + clearedLines
+                          );
                         }
                       }
                     }
                   }
-                }
+                };
 
-                if (bestMove) {
-                  workingBoard = bestMove.nextGrid;
-                  totalClearedLines += bestMove.cleared;
-                  successfullyPlaced++;
-                  newPlacedIndices = [...newPlacedIndices, ...bestMove.finalPlacedIndices];
-                  
-                  bestMove.placedCellIndices.forEach(idx => {
-                    ghostOverlayMap[idx] = blockMarker;
-                  });
-
-                  stepReports.push({
-                    order: i + 1,
-                    name: block.name,
-                    shape: bestMove.shape,
-                    row: bestMove.startR + 1,
-                    col: bestMove.startC + 1,
-                    cleared: bestMove.cleared
-                  });
-                }
+                searchCombination([...board], 0, [], 0, 0);
               }
 
-              if (successfullyPlaced > 0) {
-                setBoard(workingBoard);
-                setLastPlacedIndices(newPlacedIndices);
+              if (bestSequenceResult && bestSequenceResult.steps.length > 0) {
+                const { steps, finalGrid, totalCleared } = bestSequenceResult;
+                let ghostOverlayMap = {};
+                let finalPlacedIndices = [];
+                let stepReports = [];
+
+                steps.forEach(st => {
+                  st.placedIndices.forEach(idx => {
+                    ghostOverlayMap[idx] = st.marker;
+                  });
+                  finalPlacedIndices = [...finalPlacedIndices, ...st.placedIndices];
+                  stepReports.push({
+                    order: st.order,
+                    name: st.name,
+                    shape: st.shape,
+                    row: st.row,
+                    col: st.col,
+                    cleared: st.cleared
+                  });
+                });
+
+                setBoard(finalGrid);
+                setLastPlacedIndices(finalPlacedIndices);
                 setPlacedGhostOverlay(ghostOverlayMap);
                 setPlacedReport(stepReports);
-                setPlacedBlocksCount(prev => prev + successfullyPlaced);
-                setClearedLinesCount(prev => prev + totalClearedLines);
+                setPlacedBlocksCount(prev => prev + steps.length);
+                setClearedLinesCount(prev => prev + totalCleared);
                 setSelectedBlockIds([]);
-                setMessage(`자동 배치 완료! (${successfullyPlaced}개 배치됨, ${totalClearedLines}줄 삭제)`);
+                setMessage(`고득점 알고리즘 완료! (${steps.length}개 연속 설치, ${totalCleared}줄 파괴)`);
               } else {
-                setMessage('선택한 블록을 배치할 수 있는 자리가 없습니다.');
+                setMessage('선택한 블록 조합을 더 이상 배치할 수 없습니다.');
               }
             } catch (err) {
               console.error(err);
-              setMessage('배치 처리 중 오류가 발생했습니다.');
+              setMessage('배치 계산 과정에서 오류가 발생했습니다.');
             } finally {
               setIsSolving(false);
             }
@@ -394,10 +463,10 @@
           <div className="min-h-screen bg-[#0d1117] text-slate-100 flex flex-col items-center justify-start p-4 sm:p-6 font-sans">
             <header className="text-center mb-6">
               <h1 className="text-3xl sm:text-4xl font-extrabold tracking-wider bg-gradient-to-r from-pink-500 via-purple-400 to-indigo-400 bg-clip-text text-transparent drop-shadow-md">
-                한글 모아모아 퍼즐 솔버
+                한글 모아모아 퍼슬 솔버
               </h1>
               <p className="text-xs sm:text-sm text-slate-400 mt-1">
-                9칸 블록 도트 정확도 100% 수정 완료
+                🚀 15만점 이상 달성을 위한 3개 블록 순서 조합 예측 알고리즘 탑재
               </p>
             </header>
 
@@ -450,11 +519,10 @@
                   </div>
                 </div>
 
-                {/* 방금 배치된 블록 가이드 리포트 */}
                 {placedReport.length > 0 && (
                   <div className="w-full mt-3 p-3 bg-slate-900/90 border border-amber-500/40 rounded-xl">
                     <span className="text-xs font-bold text-amber-300 flex items-center gap-1 mb-2">
-                      📍 방금 설치된 블록 좌표 & 모양
+                      📍 최적 수순 설치 결과
                     </span>
                     <div className="grid grid-cols-3 gap-2">
                       {placedReport.map((rpt, idx) => (
@@ -481,7 +549,7 @@
                       manualMode ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 ring-2 ring-amber-300' : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
                     }`}
                   >
-                    {manualMode ? '🖐 수동 점 켜짐 (클릭시 점)' : '🖐️ 수동 점 꺼짐'}
+                    {manualMode ? '🖐 수동 점 켜짐' : '🖐️ 수동 점 꺼짐'}
                   </button>
                   <button
                     onClick={handleResetMap}
@@ -500,7 +568,7 @@
                     disabled={isSolving}
                     className="flex items-center justify-center gap-2 py-3 px-4 rounded-2xl font-extrabold text-sm sm:text-base bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white shadow-lg transition-all disabled:opacity-50"
                   >
-                    {isSolving ? '⚡ 계산 중...' : '▶️ 자동 배치'}
+                    {isSolving ? '⚡ 3개 순서 탐색중...' : '▶️ 고득점 자동 배치'}
                   </button>
                   <button
                     onClick={handleUndo}
@@ -550,7 +618,7 @@
                   </div>
 
                   <p className="text-xs text-slate-400 my-2">
-                    💡 카드를 누르면 선택되며, 회전/반전된 형태까지 모두 계산하여 최적에 배치됩니다.
+                    💡 선택한 3개 블록의 설치 순서까지 완벽히 비교하여 가장 높이가 낮고 줄을 많이 지우는 수순을 찾아냅니다.
                   </p>
 
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-[460px] overflow-y-auto pr-1">
