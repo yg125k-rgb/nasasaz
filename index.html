@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>한글 모아모아 퍼즐 솔버 - 블록 교체 추천 엔진</title>
+    <title>한글 모아모아 퍼즐 솔버 - 안전 교체 시스템</title>
 
     <!-- React 18 & ReactDOM -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
@@ -140,8 +140,8 @@
         const [manualMode, setManualMode] = useState(true);
         const [blocks, setBlocks] = useState(INITIAL_BLOCK_TEMPLATES);
         const [selectedBlockIds, setSelectedBlockIds] = useState([]);
-        const [rerollCount, setRerollCount] = useState(1); // 남아있는 블록 교체 횟수
-        const [recommendation, setRecommendation] = useState(null);
+        const [rerollCount, setRerollCount] = useState(1);
+        const [pendingBadMove, setPendingBadMove] = useState(null); // 교체 권장 시 대기 상태 저장
         const [history, setHistory] = useState([]);
         const [message, setMessage] = useState('');
 
@@ -172,7 +172,7 @@
           setClearedLinesCount(lastState.clearedLinesCount);
           setSelectedBlockIds(lastState.selectedBlockIds);
           setRerollCount(lastState.rerollCount ?? 1);
-          setRecommendation(null);
+          setPendingBadMove(null);
           setHistory(prev => prev.slice(0, -1));
           setMessage('이전 상태로 되돌렸습니다.');
         }, [history]);
@@ -201,7 +201,7 @@
           setClearedLinesCount(0);
           setSelectedBlockIds([]);
           setRerollCount(1);
-          setRecommendation(null);
+          setPendingBadMove(null);
           setMessage('맵과 선택 목록이 초기화되었습니다.');
         };
 
@@ -236,15 +236,48 @@
           setSelectedBlockIds(prev => prev.filter((_, idx) => idx !== index));
         };
 
-        // --- 교체(Reroll) 분석이 내장된 스마트 자동 배치 ---
-        const handleAutoPlace = useCallback(() => {
+        // 실질적인 보드 반영 함수
+        const executePlacement = (bestResult) => {
+          saveHistory();
+          const { steps, grid, cleared } = bestResult;
+          let ghostOverlayMap = {};
+          let finalPlacedIndices = [];
+          let stepReports = [];
+
+          steps.forEach(st => {
+            st.placedIndices.forEach(idx => {
+              ghostOverlayMap[idx] = st.marker;
+            });
+            finalPlacedIndices = [...finalPlacedIndices, ...st.placedIndices];
+            stepReports.push({
+              order: st.order,
+              name: st.name,
+              shape: st.shape,
+              row: st.row,
+              col: st.col,
+              cleared: st.cleared
+            });
+          });
+
+          setBoard(Array.from(grid));
+          setLastPlacedIndices(finalPlacedIndices);
+          setPlacedGhostOverlay(ghostOverlayMap);
+          setPlacedReport(stepReports);
+          setPlacedBlocksCount(prev => prev + steps.length);
+          setClearedLinesCount(prev => prev + cleared);
+          setSelectedBlockIds([]);
+          setPendingBadMove(null);
+          setMessage(`⚡ 배치 완료! (${steps.length}개 연속 설치, ${cleared}줄 파괴)`);
+        };
+
+        // 자동 배치 클릭 이벤트
+        const handleAutoPlace = useCallback((force = false) => {
           if (selectedBlockIds.length === 0) {
             setMessage('배치할 블록을 1개 이상 선택해 주세요.');
             return;
           }
 
-          saveHistory();
-          setRecommendation(null);
+          setPendingBadMove(null);
 
           const inputBlocks = selectedBlockIds
             .map(id => {
@@ -400,62 +433,36 @@
             }
           }
 
-          // --- 교체 추천 로직 분석 ---
-          // 배치 시 구멍이 많이 생기거나, 지운 줄이 0줄이고 효율이 매우 저하되는 나쁜 배치인 경우
-          const REROLL_THRESHOLD_SCORE = -150; // 기준 점수 이하일 때 교체 제안
-          const worstBlock = inputBlocks.reduce((maxB, b) => (b.size > maxB.size ? b : maxB), inputBlocks[0]);
+          // 비효율 배치 조건 체크 (줄 지우기 0개이면서 점수가 낮은 나쁜 상황)
+          const REROLL_THRESHOLD_SCORE = -100;
+          const isBadMove = !bestResult || (bestResult.cleared === 0 && maxTotalScore < REROLL_THRESHOLD_SCORE);
 
-          if (rerollCount > 0 && (maxTotalScore < REROLL_THRESHOLD_SCORE || !bestResult || bestResult.cleared === 0 && maxTotalScore < 0)) {
-            setRecommendation({
-              type: 'REROLL',
-              message: `⚠️ 현재 블록으로 배치 시 구멍이 늘어나거나 효율이 떨어집니다! 가장 비효율적인 [${worstBlock.name}] 블록을 교체해보세요.`
+          // 비효율 상황이고, 교체 기회가 남아있으며, 강제 배치가 아닌 경우 -> 배치 중단 후 경고 유도
+          if (!force && rerollCount > 0 && isBadMove) {
+            const worstBlock = inputBlocks.reduce((maxB, b) => (b.size > maxB.size ? b : maxB), inputBlocks[0]);
+            setPendingBadMove({
+              bestResult,
+              worstBlockName: worstBlock.name
             });
-            setMessage(`💡 [알고리즘 제안] 교체를 사용하는 것이 고득점에 유리합니다!`);
+            setMessage(`⛔ 비효율적인 배치 위험 감지! [자동 배치 중단됨]`);
+            return;
           }
 
           if (bestResult && bestResult.steps.length > 0) {
-            const { steps, grid, cleared } = bestResult;
-            let ghostOverlayMap = {};
-            let finalPlacedIndices = [];
-            let stepReports = [];
-
-            steps.forEach(st => {
-              st.placedIndices.forEach(idx => {
-                ghostOverlayMap[idx] = st.marker;
-              });
-              finalPlacedIndices = [...finalPlacedIndices, ...st.placedIndices];
-              stepReports.push({
-                order: st.order,
-                name: st.name,
-                shape: st.shape,
-                row: st.row,
-                col: st.col,
-                cleared: st.cleared
-              });
-            });
-
-            setBoard(Array.from(grid));
-            setLastPlacedIndices(finalPlacedIndices);
-            setPlacedGhostOverlay(ghostOverlayMap);
-            setPlacedReport(stepReports);
-            setPlacedBlocksCount(prev => prev + steps.length);
-            setClearedLinesCount(prev => prev + cleared);
-            setSelectedBlockIds([]);
-            if (!recommendation) {
-              setMessage(`⚡ 배치 완료! (${steps.length}개 연속 설치, ${cleared}줄 파괴)`);
-            }
+            executePlacement(bestResult);
           } else {
-            setMessage('선택한 블록을 배치할 수 있는 자리가 없습니다. 교체 기능을 사용해보세요!');
+            setMessage('선택한 블록을 배치할 수 있는 자리가 없습니다.');
           }
-        }, [selectedBlockIds, blocks, board, rerollCount, recommendation, saveHistory]);
+        }, [selectedBlockIds, blocks, board, rerollCount]);
 
-        const handleUseReroll = () => {
+        // 배치를 완전히 수행하지 않고 교체 기회만 사용
+        const handleUseRerollOnly = () => {
           if (rerollCount <= 0) return;
           saveHistory();
           setRerollCount(prev => prev - 1);
           setSelectedBlockIds([]);
-          setRecommendation(null);
-          setMessage('🎲 블록 교체 기회를 사용했습니다! 새로운 블록을 선택해주세요.');
+          setPendingBadMove(null);
+          setMessage('🎲 배치를 하지 않고 교체 기회만 1회 차감했습니다! 새 블록을 선택해주세요.');
         };
 
         const handleAddReroll = () => {
@@ -470,7 +477,7 @@
                 한글 모아모아 퍼즐 솔버
               </h1>
               <p className="text-xs sm:text-sm text-slate-400 mt-1">
-                🎲 블록 교체 추천 시스템 탑재 (비효율적 배치 시 교체 유도)
+                🛡️ 비효율적 배치 즉시 중단 및 안심 교체 시스템
               </p>
             </header>
 
@@ -572,7 +579,7 @@
                     <span className="text-xl">🎲</span>
                     <div>
                       <span className="font-extrabold text-sm text-amber-300">남은 블록 교체 기회</span>
-                      <p className="text-[11px] text-slate-400">비효율적인 블록이 나올 때 교체 가능</p>
+                      <p className="text-[11px] text-slate-400">비효율 시 맵 배치 없이 교체만 가능</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -580,7 +587,7 @@
                       {rerollCount}회
                     </span>
                     <button
-                      onClick={handleUseReroll}
+                      onClick={handleUseRerollOnly}
                       disabled={rerollCount <= 0}
                       className="py-2 px-3 rounded-xl font-bold text-xs bg-amber-500 hover:bg-amber-400 text-slate-950 disabled:opacity-30 shadow"
                     >
@@ -595,21 +602,28 @@
                   </div>
                 </div>
 
-                {/* 교체 추천 경고 영역 */}
-                {recommendation && (
-                  <div className="bg-amber-950/80 border-2 border-amber-400/80 rounded-2xl p-4 flex flex-col gap-2 shadow-xl animate-bounce">
-                    <span className="text-xs font-black text-amber-300 flex items-center gap-1">
-                      💡 알고리즘 스마트 추천
-                    </span>
-                    <p className="text-xs sm:text-sm text-amber-100 font-semibold leading-relaxed">
-                      {recommendation.message}
+                {/* 자동 배치 중단 및 안심 교체 안내 창 */}
+                {pendingBadMove && (
+                  <div className="bg-rose-950/90 border-2 border-rose-500/80 rounded-2xl p-4 flex flex-col gap-3 shadow-2xl animate-pulse">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xl">🚨</span>
+                      <span className="text-sm font-black text-rose-300">자동 배치가 사전 중단되었습니다</span>
+                    </div>
+                    <p className="text-xs sm:text-sm text-rose-100 leading-relaxed">
+                      현재 선택된 블록은 구멍을 많이 생성하거나 줄을 지우지 못합니다. <strong>맵에 배치하지 않고</strong> 교체만 진행하시겠습니까?
                     </p>
-                    <div className="flex justify-end gap-2 mt-1">
+                    <div className="flex flex-wrap items-center justify-end gap-2 mt-1">
                       <button
-                        onClick={handleUseReroll}
-                        className="py-1.5 px-3 rounded-lg text-xs font-extrabold bg-amber-400 text-slate-950 hover:bg-amber-300 shadow"
+                        onClick={() => handleAutoPlace(true)}
+                        className="py-1.5 px-3 rounded-lg text-xs font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700"
                       >
-                        지금 교체하기 (남은 횟수: {rerollCount}회)
+                        위험 무릅쓰고 그냥 배치하기
+                      </button>
+                      <button
+                        onClick={handleUseRerollOnly}
+                        className="py-2 px-4 rounded-xl text-xs font-black bg-amber-400 text-slate-950 hover:bg-amber-300 shadow-md"
+                      >
+                        🎲 배치 취소 후 교체하기 (남은 기회: {rerollCount}회)
                       </button>
                     </div>
                   </div>
@@ -617,7 +631,7 @@
 
                 <div className="grid grid-cols-2 gap-3">
                   <button
-                    onClick={handleAutoPlace}
+                    onClick={() => handleAutoPlace(false)}
                     className="flex items-center justify-center gap-2 py-3 px-4 rounded-2xl font-extrabold text-sm sm:text-base bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white shadow-lg transition-all"
                   >
                     ⚡ 스마트 자동 배치
@@ -669,11 +683,7 @@
                     })}
                   </div>
 
-                  <p className="text-xs text-slate-400 my-2">
-                    💡 배치 효율이 너무 떨어지는 경우 알고리즘이 자동으로 블록 교체를 추천합니다.
-                  </p>
-
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-[460px] overflow-y-auto pr-1">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-[460px] overflow-y-auto pr-1 mt-2">
                     {blocks.map(block => {
                       const occurrences = selectedBlockIds
                         .map((id, idx) => id === block.id ? idx + 1 : null)
