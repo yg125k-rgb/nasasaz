@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>한글 모아모아 퍼즐 솔버 - 흰색 및 얼룩무늬 전용 인식 버전</title>
+    <title>한글 모아모아 퍼즐 솔버 - 배경 완벽 차단 버전</title>
 
     <!-- React 18 & ReactDOM -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
@@ -326,10 +326,10 @@
           return imageData;
         };
 
-        // --- 흰색 블록 및 얼룩무늬(명암) 블록 전용 판별 함수 ---
+        // --- 엄격한 흰색 및 얼룩무늬 블록 판별 함수 (배경 완벽 차단) ---
         const isCellFilledBlock = (ctx, cx, cy, cellW, cellH) => {
-          const halfW = Math.max(1, Math.floor(cellW * 0.3));
-          const halfH = Math.max(1, Math.floor(cellH * 0.3));
+          const halfW = Math.max(1, Math.floor(cellW * 0.25));
+          const halfH = Math.max(1, Math.floor(cellH * 0.25));
           const x = Math.floor(cx - halfW);
           const y = Math.floor(cy - halfH);
           const w = Math.max(2, halfW * 2);
@@ -352,10 +352,11 @@
           const avgLum = sum / count;
           const lumRange = maxLum - minLum;
 
-          // 1. 흰색 블록: 전체 평균 밝기가 충분히 밝음 (avgLum이 높음)
-          // 2. 얼룩무늬 블록: 검정과 흰색이 섞여 내부 명암 낙차(lumRange)가 큼
-          // 배경은 어둡고 균일하므로 이 조건에서 철저히 제외됨
-          if (avgLum > 75 || (avgLum > 35 && lumRange > 25)) {
+          // 배경(어두운 격자)은 보통 avgLum이 매우 낮음 (< 40~50)
+          // 진짜 블록인 경우에만 통과하도록 임계값을 상향 조정
+          // 1. 순수 흰색 블록: 평균 밝기가 충분히 밝음 (avgLum > 110)
+          // 2. 얼룩무늬 블록: 내부에 확실한 명암 대비(하이라이트/그라데이션)가 존재함 (avgLum > 60 이면서 lumRange > 45)
+          if (avgLum > 110 || (avgLum > 60 && lumRange > 45)) {
             return true;
           }
 
@@ -835,8 +836,8 @@
                   <div className="flex items-center gap-2">
                     <span className="text-lg">✨</span>
                     <div>
-                      <span className="font-extrabold text-xs sm:text-sm text-indigo-300">흰색 & 얼룩무늬 블록 전용 인식 모드</span>
-                      <p className="text-[10px] text-slate-400">밝은 흰색 블록과 검정/흰색이 섞인 얼룩무늬 블록만 정확히 인식합니다.</p>
+                      <span className="font-extrabold text-xs sm:text-sm text-indigo-300">흰색 & 얼룩무늬 블록 전용 인식 모드 (엄격 차단)</span>
+                      <p className="text-[10px] text-slate-400">어두운 배경과 빈 셀을 완전히 배제하고 흰색 및 얼룩무늬 블록만 감지합니다.</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
