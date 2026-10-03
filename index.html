@@ -108,7 +108,7 @@
 
       function App() {
         const [board, setBoard] = useState(() => Array(TOTAL_CELLS).fill(0));
-        const [lastPlacedIndices, setLastPlacedIndices] = useState([]); // 🌟 방금 놓은 블록들의 인덱스 저장
+        const [lastPlacedIndices, setLastPlacedIndices] = useState([]);
         const [placedBlocksCount, setPlacedBlocksCount] = useState(0);
         const [clearedLinesCount, setClearedLinesCount] = useState(0);
         const [manualMode, setManualMode] = useState(true);
@@ -149,7 +149,6 @@
           const newBoard = [...board];
           newBoard[index] = newBoard[index] > 0 ? 0 : 1;
           setBoard(newBoard);
-          // 수동 조작 시 이전 하이라이트 삭제
           setLastPlacedIndices(prev => prev.filter(i => i !== index));
         };
 
@@ -159,7 +158,8 @@
           setLastPlacedIndices([]);
           setPlacedBlocksCount(0);
           setClearedLinesCount(0);
-          setMessage('맵이 초기화되었습니다.');
+          setSelectedBlockIds([]);
+          setMessage('맵과 선택 목록이 초기화되었습니다.');
         };
 
         const handleRotateBlock = (id, e) => {
@@ -198,7 +198,7 @@
               let workingBoard = [...board];
               let totalClearedLines = 0;
               let successfullyPlaced = 0;
-              let newPlacedIndices = []; // 이번 배치에서 채워진 칸들의 좌표 추적
+              let newPlacedIndices = [];
 
               const chosenBlocks = selectedBlockIds
                 .map(id => blocks.find(b => b.id === id))
@@ -240,7 +240,6 @@
                 const nextGrid = Array(TOTAL_CELLS).fill(0);
                 let nextRowIdx = BOARD_ROWS - 1;
 
-                // 줄 삭제 후 이동 위치 계산
                 const clearedRowIndices = new Set();
                 for (let r = BOARD_ROWS - 1; r >= 0; r--) {
                   let isFull = true;
@@ -261,13 +260,11 @@
                   }
                 }
 
-                // 삭제되고 남은 칸의 새로운 위치 추적
                 const finalPlacedIndices = [];
                 placedCellIndices.forEach(oldIdx => {
                   const r = Math.floor(oldIdx / BOARD_COLS);
                   const c = oldIdx % BOARD_COLS;
                   if (!clearedRowIndices.has(r)) {
-                    // 삭제되지 않은 줄들의 하강 위치 계산
                     let shiftDown = 0;
                     for (let checkR = r + 1; checkR < BOARD_ROWS; checkR++) {
                       if (clearedRowIndices.has(checkR)) shiftDown++;
@@ -297,7 +294,7 @@
 
               for (let i = 0; i < chosenBlocks.length; i++) {
                 const block = chosenBlocks[i];
-                const blockMarker = i + 2; // 2: 1번, 3: 2번, 4: 3번
+                const blockMarker = i + 2;
                 const orientations = getAllOrientations(block.shape);
                 let bestMove = null;
                 let maxScore = -999999;
@@ -326,10 +323,11 @@
 
               if (successfullyPlaced > 0) {
                 setBoard(workingBoard);
-                setLastPlacedIndices(newPlacedIndices); // 🌟 이번에 새로 놓인 블록 좌표 등록
+                setLastPlacedIndices(newPlacedIndices);
                 setPlacedBlocksCount(prev => prev + successfullyPlaced);
                 setClearedLinesCount(prev => prev + totalClearedLines);
-                setMessage(`자동 배치 완료! 방금 배치한 블록에 노란 테두리가 표시됩니다.`);
+                setSelectedBlockIds([]); // 🌟 배치 완료 후 블록 선택 자동 초기화!
+                setMessage(`자동 배치 완료! 배치된 블록은 노란 테두리로 표시되고 선택은 초기화되었습니다.`);
               } else {
                 setMessage('선택한 블록을 배치할 수 있는 자리가 없습니다.');
               }
@@ -349,7 +347,7 @@
                 한글 모아모아 퍼즐 솔버
               </h1>
               <p className="text-xs sm:text-sm text-slate-400 mt-1">
-                방금 배치한 블록 위치는 맵 위에서 노란 강조 테두리로 한눈에 보여요
+                자동 배치 후 블록 선택은 자동 초기화되며, 위치는 노란 테두리로 강조됩니다
               </p>
             </header>
 
@@ -375,7 +373,7 @@
                   <div className="board-grid-container">
                     {board.map((cellValue, idx) => {
                       const style = CELL_STYLES[cellValue] || CELL_STYLES[0];
-                      const isJustPlaced = lastPlacedIndices.includes(idx); // 🌟 방금 놓인 블록인지 판단
+                      const isJustPlaced = lastPlacedIndices.includes(idx);
 
                       return (
                         <div
@@ -451,7 +449,7 @@
                   </div>
 
                   <p className="text-xs text-slate-400 mb-4">
-                    자동 배치를 누르면 맵의 **어디에 새로 배치되었는지 노란 테두리**로 하이라이트됩니다.
+                    자동 배치가 완료되면 선택 목록은 비워지며, 다음 블록 3개를 바로 선택하여 이어서 배치할 수 있습니다.
                   </p>
 
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-[500px] overflow-y-auto pr-1">
