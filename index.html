@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>한글 모아모아 퍼즐 솔버 - 최종 수정 버전</title>
+    <title>한글 모아모아 퍼즐 솔버 - 이미지 보정 버전</title>
 
     <!-- React 18 & ReactDOM -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
@@ -144,6 +144,12 @@
         const [pendingBadMove, setPendingBadMove] = useState(null);
         const [history, setHistory] = useState([]);
         const [message, setMessage] = useState('');
+
+        // --- 이미지 보정 및 흑백 설정 상태 ---
+        const [isGrayscale, setIsGrayscale] = useState(true);
+        const [brightness, setBrightness] = useState(0); // -100 ~ 100
+        const [contrast, setContrast] = useState(0);     // -100 ~ 100
+        const [gamma, setGamma] = useState(1.0);         // 0.2 ~ 2.2
         
         const [showDebugPreview, setShowDebugPreview] = useState(false);
         const debugCanvasRef = useRef(null);
@@ -289,10 +295,67 @@
           setCurrentDrag(null);
         };
 
+        // --- 이미지 후처리 필터 적용 헬퍼 함수 ---
+        const processImageFilters = (imageData) => {
+          const data = imageData.data;
+          const contrastFactor = (259 * (contrast + 255)) / (255 * (259 - contrast));
+
+          for (let i = 0; i < data.length; i += 4) {
+            let r = data[i];
+            let g = data[i + 1];
+            let b = data[i + 2];
+
+            // 1. 흑백 변환 (Grayscale)
+            if (isGrayscale) {
+              const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+              r = gray;
+              g = gray;
+              b = gray;
+            }
+
+            // 2. 밝기 조절 (Brightness)
+            r += brightness;
+            g += brightness;
+            b += brightness;
+
+            // 3. 대비 조절 (Contrast)
+            r = contrastFactor * (r - 128) + 128;
+            g = contrastFactor * (g - 128) + 128;
+            b = contrastFactor * (b - 128) + 128;
+
+            // 4. 감마 보정 (Gamma)
+            if (gamma !== 1.0 && gamma > 0) {
+              r = 255 * Math.pow(Math.min(Math.max(r, 0), 255) / 255, 1 / gamma);
+              g = 255 * Math.pow(Math.min(Math.max(g, 0), 255) / 255, 1 / gamma);
+              b = 255 * Math.pow(Math.min(Math.max(b, 0), 255) / 255, 1 / gamma);
+            }
+
+            data[i]     = Math.min(Math.max(r, 0), 255);
+            data[i + 1] = Math.min(Math.max(g, 0), 255);
+            data[i + 2] = Math.min(Math.max(b, 0), 255);
+          }
+          return imageData;
+        };
+
         const isCellFilledBlock = (ctx, cx, cy, cellW, cellH) => {
           const p = ctx.getImageData(cx, cy, 1, 1).data;
           const r = p[0], g = p[1], b = p[2];
 
+          if (isGrayscale) {
+            // 흑백 모드일 때 밝기 기준으로 판단
+            const lum = (r + g + b) / 3;
+            // 배경색과 블록색 구별 (배경보다 어둡거나 확실히 밝은 입체 명암이 있는 경우)
+            const pTop = ctx.getImageData(cx, cy - Math.floor(cellH * 0.25), 1, 1).data;
+            const lumTop = (pTop[0] + pTop[1] + pTop[2]) / 3;
+
+            // 너무 어두운 배경이 아니거나 하이라이트가 있는 경우 블록으로 인정
+            if (lum > 35 && (Math.abs(lum - lumTop) > 15 || lum > 110)) {
+              return true;
+            }
+            return false;
+          }
+
+          // 컬러 모드 판별 로직
           const isSkyBlueBackground = (b > r + 15 && g > r + 8 && r < 135 && (r+g+b)/3 > 90 && (r+g+b)/3 < 220);
 
           if (!isSkyBlueBackground) {
@@ -348,10 +411,12 @@
             dbgCanvas.height = mapHeight;
             const debugCtx = dbgCanvas.getContext('2d', { willReadFrequently: true });
             
-            // Fixed: debugCtx.drawImage instead of dbgCanvas.drawImage
             debugCtx.drawImage(video, startX, startY, mapWidth, mapHeight, 0, 0, mapWidth, mapHeight);
             
-            const imgData = debugCtx.getImageData(0, 0, mapWidth, mapHeight);
+            let imgData = debugCtx.getImageData(0, 0, mapWidth, mapHeight);
+            imgData = processImageFilters(imgData);
+            debugCtx.putImageData(imgData, 0, 0);
+
             const data = imgData.data;
             for (let r = 0; r < BOARD_ROWS; r++) {
               for (let c = 0; c < BOARD_COLS; c++) {
@@ -374,6 +439,11 @@
             debugCtx.putImageData(imgData, 0, 0);
           }
 
+          // 메인 분석용 캔버스에도 필터 적용
+          let mainImgData = ctx.getImageData(startX, startY, mapWidth, mapHeight);
+          mainImgData = processImageFilters(mainImgData);
+          ctx.putImageData(mainImgData, startX, startY);
+
           for (let r = 0; r < BOARD_ROWS; r++) {
             for (let c = 0; c < BOARD_COLS; c++) {
               const centerX = Math.floor(startX + c * cellW + cellW / 2);
@@ -387,7 +457,7 @@
           }
 
           setBoard(newBoard);
-        }, [cropRect]);
+        }, [cropRect, isGrayscale, brightness, contrast, gamma]);
 
         useEffect(() => {
           let intervalId = null;
@@ -764,44 +834,107 @@
 
             <div className="w-full max-w-6xl flex flex-col gap-3">
               {/* 컨트롤러 바 */}
-              <div className="bg-[#161b22] border border-indigo-500/30 rounded-xl p-2.5 flex items-center justify-between shadow-lg">
-                <div className="flex items-center gap-2">
-                  <span className="text-lg">✨</span>
-                  <div>
-                    <span className="font-extrabold text-xs sm:text-sm text-indigo-300">정밀 인식 모드 (파란 블록 인식 & 나뭇잎 필터링)</span>
-                    <p className="text-[10px] text-slate-400">보드판만 캡처하며, 파란색 블록은 잡고 상단 나뭇잎 오인식은 완벽히 차단합니다.</p>
+              <div className="bg-[#161b22] border border-indigo-500/30 rounded-xl p-2.5 flex flex-col gap-3 shadow-lg">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">✨</span>
+                    <div>
+                      <span className="font-extrabold text-xs sm:text-sm text-indigo-300">정밀 인식 모드 (흑백 변환 및 이미지 보정 탑재)</span>
+                      <p className="text-[10px] text-slate-400">흑백 전환 및 밝기·대비·감마 조절로 블록 인식률을 조절할 수 있습니다.</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {!isCapturing ? (
+                      <button
+                        onClick={handleStartCapture}
+                        className="py-1.5 px-3 rounded-lg font-bold text-xs bg-indigo-600 hover:bg-indigo-500 text-white shadow transition-all"
+                      >
+                        📹 화면 연동 켜기
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => setShowCropModal(true)}
+                          className="py-1.5 px-2.5 rounded-lg font-bold text-xs bg-amber-500 text-slate-950 hover:bg-amber-400 shadow"
+                        >
+                          🖱 영역 재설정
+                        </button>
+                        <button
+                          onClick={captureAndAnalyzeFrame}
+                          className="py-1.5 px-2.5 rounded-lg font-bold text-xs bg-emerald-600 hover:bg-emerald-500 text-white shadow"
+                        >
+                          ⚡ 수동 캡처
+                        </button>
+                        <button
+                          onClick={handleStopCapture}
+                          className="py-1.5 px-2 rounded-lg font-bold text-xs bg-rose-600 hover:bg-rose-700 text-white shadow"
+                        >
+                          ⏹ 중지
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  {!isCapturing ? (
+
+                {/* 이미지 보정 슬라이더 패널 */}
+                <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-2.5 grid grid-cols-1 sm:grid-cols-4 gap-3 items-center">
+                  <div className="flex items-center justify-between sm:justify-start gap-2">
+                    <span className="text-xs font-bold text-slate-300">흑백 모드</span>
                     <button
-                      onClick={handleStartCapture}
-                      className="py-1.5 px-3 rounded-lg font-bold text-xs bg-indigo-600 hover:bg-indigo-500 text-white shadow transition-all"
+                      onClick={() => setIsGrayscale(!isGrayscale)}
+                      className={`px-3 py-1 rounded-lg font-extrabold text-xs transition-all ${
+                        isGrayscale ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'
+                      }`}
                     >
-                      📹 화면 연동 켜기
+                      {isGrayscale ? 'ON (흑백)' : 'OFF (컬러)'}
                     </button>
-                  ) : (
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={() => setShowCropModal(true)}
-                        className="py-1.5 px-2.5 rounded-lg font-bold text-xs bg-amber-500 text-slate-950 hover:bg-amber-400 shadow"
-                      >
-                        🖱 영역 재설정
-                      </button>
-                      <button
-                        onClick={captureAndAnalyzeFrame}
-                        className="py-1.5 px-2.5 rounded-lg font-bold text-xs bg-emerald-600 hover:bg-emerald-500 text-white shadow"
-                      >
-                        ⚡ 수동 캡처
-                      </button>
-                      <button
-                        onClick={handleStopCapture}
-                        className="py-1.5 px-2 rounded-lg font-bold text-xs bg-rose-600 hover:bg-rose-700 text-white shadow"
-                      >
-                        ⏹ 중지
-                      </button>
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <div className="flex justify-between text-[11px] text-slate-400 font-medium">
+                      <span>밝기 (Brightness)</span>
+                      <span className="text-amber-400 font-mono">{brightness}</span>
                     </div>
-                  )}
+                    <input
+                      type="range"
+                      min="-100"
+                      max="100"
+                      value={brightness}
+                      onChange={(e) => setBrightness(Number(e.target.value))}
+                      className="accent-amber-400 h-1 bg-slate-700 rounded-lg cursor-pointer"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <div className="flex justify-between text-[11px] text-slate-400 font-medium">
+                      <span>대비 (Contrast)</span>
+                      <span className="text-amber-400 font-mono">{contrast}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="-100"
+                      max="100"
+                      value={contrast}
+                      onChange={(e) => setContrast(Number(e.target.value))}
+                      className="accent-amber-400 h-1 bg-slate-700 rounded-lg cursor-pointer"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <div className="flex justify-between text-[11px] text-slate-400 font-medium">
+                      <span>감마 (Gamma)</span>
+                      <span className="text-amber-400 font-mono">{gamma.toFixed(1)}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.2"
+                      max="2.2"
+                      step="0.1"
+                      value={gamma}
+                      onChange={(e) => setGamma(Number(e.target.value))}
+                      className="accent-amber-400 h-1 bg-slate-700 rounded-lg cursor-pointer"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -852,11 +985,11 @@
                       onClick={() => setShowDebugPreview(!showDebugPreview)}
                       className="text-[11px] text-indigo-400 hover:text-indigo-300 font-bold mb-1 underline"
                     >
-                      {showDebugPreview ? '🔍 인식 프리뷰 닫기' : '🔍 인식 프리뷰 열기 (파란 블록 & 나뭇잎 제외 확인)'}
+                      {showDebugPreview ? '🔍 인식 프리뷰 닫기' : '🔍 인식 프리뷰 열기 (흑백 및 보정 상태 확인)'}
                     </button>
                     {showDebugPreview && (
                       <div className="p-1.5 bg-black border border-indigo-500/50 rounded-lg flex flex-col items-center">
-                        <span className="text-[9px] text-slate-400 mb-1">흰색으로 표시되는 셀이 블록으로 인식된 곳입니다</span>
+                        <span className="text-[9px] text-slate-400 mb-1">현재 적용된 필터와 인식 결과 화면입니다</span>
                         <canvas ref={debugCanvasRef} className="max-w-[200px] h-auto rounded border border-slate-700" />
                       </div>
                     )}
