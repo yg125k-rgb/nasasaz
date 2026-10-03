@@ -4,18 +4,409 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>한글 모아모아 퍼즐 솔버</title>
-    <!-- React & ReactDOM CDN -->
+
+    <!-- React 18 & ReactDOM -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-    <!-- Babel (JSX 변환용) -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.min.js"></script>
+    
+    <!-- Babel JS (React JSX 변환) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
   </head>
-  <body class="bg-slate-950 text-white">
+  <body class="bg-[#0d1117] text-slate-100">
     <div id="root"></div>
 
-    <!-- App.jsx 불러오기 및 Babel 변환 -->
-    <script type="text/babel" src="/src/App.jsx"></script>
+    <script type="text/babel">
+      const { useState, useEffect, useCallback } = React;
+
+      const INITIAL_BLOCK_TEMPLATES = [
+        { id: 1, name: '1칸', size: 1, shape: [[1]] },
+        { id: 2, name: '3칸 ㄱ', size: 3, shape: [[1, 1], [1, 0]] },
+        { id: 3, name: '3칸 -', size: 3, shape: [[1, 1, 1]] },
+        { id: 4, name: '3칸 ㄴ', size: 3, shape: [[1, 0], [1, 1]] },
+        { id: 5, name: '4칸 ㅗ', size: 4, shape: [[0, 1, 0], [1, 1, 1]] },
+        { id: 6, name: '4칸 ㅁ', size: 4, shape: [[1, 1], [1, 1]] },
+        { id: 7, name: '5칸 ㄷ', size: 5, shape: [[1, 1], [1, 0], [1, 1]] },
+        { id: 8, name: '5칸 -', size: 5, shape: [[1, 1, 1, 1, 1]] },
+        { id: 9, name: '6칸 H', size: 6, shape: [[1, 0, 1], [1, 1, 1], [1, 0, 1]] },
+        { id: 10, name: '6칸 F', size: 6, shape: [[1, 1, 1], [1, 0, 0], [1, 1, 0]] },
+        { id: 11, name: '7칸 十', size: 7, shape: [[0, 1, 0], [1, 1, 1], [0, 1, 0], [0, 1, 0]] },
+        { id: 12, name: '7칸 계단', size: 7, shape: [[1, 0, 0], [1, 1, 0], [0, 1, 1]] },
+        { id: 13, name: '8칸 ㅁ테두리', size: 8, shape: [[1, 1, 1], [1, 0, 1], [1, 1, 1]] },
+        { id: 14, name: '8칸 E', size: 8, shape: [[1, 1, 1], [1, 0, 0], [1, 1, 0], [1, 1, 1]] },
+        { id: 15, name: '8칸 Z복합', size: 8, shape: [[1, 1, 0], [0, 1, 1], [0, 1, 1]] },
+        { id: 16, name: '9칸 화살표', size: 9, shape: [[0, 0, 1, 0, 0], [0, 1, 1, 1, 0], [1, 1, 1, 1, 1]] },
+        { id: 17, name: '10칸 ㅂ', size: 10, shape: [[1, 0, 1], [1, 1, 1], [1, 0, 1], [1, 1, 1]] },
+        { id: 18, name: '10칸 H확장', size: 10, shape: [[1, 0, 1], [1, 0, 1], [1, 1, 1], [1, 0, 1], [1, 0, 1]] },
+        { id: 19, name: '10칸 T', size: 10, shape: [[1, 1, 1, 1], [0, 1, 0, 0], [0, 1, 0, 0], [0, 1, 0, 0]] },
+      ];
+
+      const BOARD_COLS = 10;
+      const BOARD_ROWS = 15;
+
+      const rotateMatrix = (matrix) => {
+        const rows = matrix.length;
+        const cols = matrix[0].length;
+        const result = Array.from({ length: cols }, () => Array(rows).fill(0));
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            result[c][rows - 1 - r] = matrix[r][c];
+          }
+        }
+        return result;
+      };
+
+      const flipMatrix = (matrix) => matrix.map(row => [...row].reverse());
+
+      function App() {
+        const [board, setBoard] = useState(() => 
+          Array.from({ length: BOARD_ROWS }, () => Array(BOARD_COLS).fill(0))
+        );
+        const [placedBlocksCount, setPlacedBlocksCount] = useState(0);
+        const [clearedLinesCount, setClearedLinesCount] = useState(0);
+        const [manualMode, setManualMode] = useState(true);
+        const [blocks, setBlocks] = useState(INITIAL_BLOCK_TEMPLATES);
+        const [selectedBlockIds, setSelectedBlockIds] = useState([]);
+        const [history, setHistory] = useState([]);
+        const [isSolving, setIsSolving] = useState(false);
+        const [message, setMessage] = useState('');
+
+        const saveHistory = useCallback(() => {
+          setHistory(prev => [
+            ...prev,
+            {
+              board: JSON.parse(JSON.stringify(board)),
+              placedBlocksCount,
+              clearedLinesCount,
+              selectedBlockIds: [...selectedBlockIds]
+            }
+          ]);
+        }, [board, placedBlocksCount, clearedLinesCount, selectedBlockIds]);
+
+        const handleUndo = useCallback(() => {
+          if (history.length === 0) return;
+          const lastState = history[history.length - 1];
+          setBoard(lastState.board);
+          setPlacedBlocksCount(lastState.placedBlocksCount);
+          setClearedLinesCount(lastState.clearedLinesCount);
+          setSelectedBlockIds(lastState.selectedBlockIds);
+          setHistory(prev => prev.slice(0, -1));
+          setMessage('이전 상태로 되돌렸습니다.');
+        }, [history]);
+
+        const handleCellClick = (r, c) => {
+          if (!manualMode) return;
+          saveHistory();
+          const newBoard = board.map(row => [...row]);
+          newBoard[r][c] = newBoard[r][c] === 1 ? 0 : 1;
+          setBoard(newBoard);
+        };
+
+        const handleResetMap = () => {
+          saveHistory();
+          setBoard(Array.from({ length: BOARD_ROWS }, () => Array(BOARD_COLS).fill(0)));
+          setPlacedBlocksCount(0);
+          setClearedLinesCount(0);
+          setMessage('맵이 초기화되었습니다.');
+        };
+
+        const handleRotateBlock = (id, e) => {
+          e.stopPropagation();
+          setBlocks(prev => prev.map(b => b.id === id ? { ...b, shape: rotateMatrix(b.shape) } : b));
+        };
+
+        const handleFlipBlock = (id, e) => {
+          e.stopPropagation();
+          setBlocks(prev => prev.map(b => b.id === id ? { ...b, shape: flipMatrix(b.shape) } : b));
+        };
+
+        const handleSelectBlock = (id) => {
+          if (selectedBlockIds.includes(id)) {
+            setSelectedBlockIds(prev => prev.filter(item => item !== id));
+          } else {
+            if (selectedBlockIds.length >= 3) {
+              setMessage('블록은 최대 3개까지 선택할 수 있습니다.');
+              return;
+            }
+            setSelectedBlockIds(prev => [...prev, id]);
+          }
+        };
+
+        const canPlace = (grid, shape, startR, startC) => {
+          const sRows = shape.length;
+          const sCols = shape[0].length;
+          if (startR + sRows > BOARD_ROWS || startC + sCols > BOARD_COLS) return false;
+          for (let r = 0; r < sRows; r++) {
+            for (let c = 0; c < sCols; c++) {
+              if (shape[r][c] === 1 && grid[startR + r][startC + c] === 1) return false;
+            }
+          }
+          return true;
+        };
+
+        const applyPlacement = (grid, shape, startR, startC) => {
+          const newGrid = grid.map(row => [...row]);
+          for (let r = 0; r < shape.length; r++) {
+            for (let c = 0; c < shape[0].length; c++) {
+              if (shape[r][c] === 1) newGrid[startR + r][startC + c] = 1;
+            }
+          }
+          let cleared = 0;
+          const remainingRows = [];
+          for (let r = 0; r < BOARD_ROWS; r++) {
+            if (newGrid[r].every(cell => cell === 1)) {
+              cleared++;
+            } else {
+              remainingRows.push([...newGrid[r]]);
+            }
+          }
+          while (remainingRows.length < BOARD_ROWS) {
+            remainingRows.unshift(Array(BOARD_COLS).fill(0));
+          }
+          return { grid: remainingRows, clearedLines: cleared };
+        };
+
+        const getAllOrientations = (initialShape) => {
+          const orientations = [];
+          const keys = new Set();
+          let current = initialShape;
+          for (let r = 0; r < 4; r++) {
+            const k1 = JSON.stringify(current);
+            if (!keys.has(k1)) { keys.add(k1); orientations.push(current); }
+            const flipped = flipMatrix(current);
+            const k2 = JSON.stringify(flipped);
+            if (!keys.has(k2)) { keys.add(k2); orientations.push(flipped); }
+            current = rotateMatrix(current);
+          }
+          return orientations;
+        };
+
+        const handleAutoPlace = useCallback(() => {
+          if (selectedBlockIds.length === 0) {
+            setMessage('배치할 블록을 1개 이상 선택해 주세요.');
+            return;
+          }
+          setIsSolving(true);
+          setMessage('최적의 배치를 계산 중입니다...');
+
+          setTimeout(() => {
+            saveHistory();
+            const chosenBlocks = selectedBlockIds.map(id => blocks.find(b => b.id === id));
+            
+            const getPermutations = (arr) => {
+              if (arr.length <= 1) return [arr];
+              const res = [];
+              for (let i = 0; i < arr.length; i++) {
+                const current = arr[i];
+                const remaining = arr.slice(0, i).concat(arr.slice(i + 1));
+                const perms = getPermutations(remaining);
+                for (let p of perms) res.push([current, ...p]);
+              }
+              return res;
+            };
+
+            const blockOrders = getPermutations(chosenBlocks);
+            let bestPlacement = null;
+            let maxScore = -999999;
+
+            const solve = (currentGrid, blockSeq, stepIndex, currentCleared) => {
+              if (stepIndex === blockSeq.length) {
+                let holes = 0, totalCells = 0;
+                for (let r = 0; r < BOARD_ROWS; r++) {
+                  for (let c = 0; c < BOARD_COLS; c++) {
+                    if (currentGrid[r][c] === 1) totalCells++;
+                    else if (r > 0 && currentGrid[r - 1][c] === 1) holes++;
+                  }
+                }
+                const score = (currentCleared * 1000) - (holes * 10) + (totalCells * 2);
+                if (score > maxScore) {
+                  maxScore = score;
+                  bestPlacement = {
+                    finalGrid: currentGrid,
+                    totalCleared: currentCleared,
+                    placementsCount: blockSeq.length
+                  };
+                }
+                return;
+              }
+
+              const block = blockSeq[stepIndex];
+              const orientations = getAllOrientations(block.shape);
+              for (const shape of orientations) {
+                for (let r = 0; r <= BOARD_ROWS - shape.length; r++) {
+                  for (let c = 0; c <= BOARD_COLS - shape[0].length; c++) {
+                    if (canPlace(currentGrid, shape, r, c)) {
+                      const { grid: nextGrid, clearedLines } = applyPlacement(currentGrid, shape, r, c);
+                      solve(nextGrid, blockSeq, stepIndex + 1, currentCleared + clearedLines);
+                    }
+                  }
+                }
+              }
+            };
+
+            for (const seq of blockOrders) solve(board, seq, 0, 0);
+
+            if (bestPlacement) {
+              setBoard(bestPlacement.finalGrid);
+              setPlacedBlocksCount(prev => prev + bestPlacement.placementsCount);
+              setClearedLinesCount(prev => prev + bestPlacement.totalCleared);
+              setSelectedBlockIds([]);
+              setMessage(`자동 배치 완료! (${bestPlacement.totalCleared} 줄 삭제됨)`);
+            } else {
+              setMessage('선택한 블록을 배치할 수 있는 자리가 없습니다.');
+            }
+            setIsSolving(false);
+          }, 100);
+        }, [selectedBlockIds, blocks, board, saveHistory]);
+
+        return (
+          <div className="min-h-screen bg-[#0d1117] text-slate-100 flex flex-col items-center justify-start p-4 sm:p-6 font-sans select-none">
+            <header className="text-center mb-6">
+              <h1 className="text-3xl sm:text-4xl font-extrabold tracking-wider bg-gradient-to-r from-pink-500 via-purple-400 to-indigo-400 bg-clip-text text-transparent drop-shadow-md">
+                한글 모아모아 퍼즐 솔버
+              </h1>
+              <p className="text-xs sm:text-sm text-slate-400 mt-1">
+                블록을 최대 3개 고르면 가장 좋은 순서와 자리를 찾아드려요
+              </p>
+            </header>
+
+            <div className="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              <div className="lg:col-span-5 bg-[#161b22] border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-2xl flex flex-col items-center">
+                <div className="w-full flex justify-between items-center mb-3 pb-3 border-b border-slate-800">
+                  <span className="font-bold text-lg text-slate-200">맵</span>
+                  <div className="flex gap-4 text-sm font-semibold">
+                    <span className="text-slate-400">놓은 블록 <strong className="text-slate-100 font-mono ml-1">{placedBlocksCount}</strong></span>
+                    <span className="text-slate-400">지운 줄 <strong className="text-pink-400 font-mono ml-1">{clearedLinesCount}</strong></span>
+                  </div>
+                </div>
+
+                <div className="relative bg-[#0d1117] p-2 rounded-xl border border-slate-800/80 shadow-inner">
+                  <div 
+                    className="grid gap-[2px] bg-slate-900 p-[2px] rounded-lg"
+                    style={{ gridTemplateColumns: `repeat(${BOARD_COLS}, minmax(0, 1fr))`, width: '100%', maxWidth: '280px', aspectRatio: '10 / 15' }}
+                  >
+                    {board.map((row, rIdx) =>
+                      row.map((cell, cIdx) => (
+                        <div
+                          key={`${rIdx}-${cIdx}`}
+                          onClick={() => handleCellClick(rIdx, cIdx)}
+                          className={`rounded-[2px] cursor-pointer transition-all duration-150 flex items-center justify-center ${
+                            cell === 1 ? 'bg-gradient-to-br from-pink-500 to-rose-600 shadow-sm border border-pink-400/30' : 'bg-[#18202c] hover:bg-[#253246]'
+                          }`}
+                        >
+                          {cell === 1 && <div className="w-1.5 h-1.5 rounded-full bg-pink-200/50" />}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div className="w-full grid grid-cols-2 gap-3 mt-4">
+                  <button
+                    onClick={() => setManualMode(!manualMode)}
+                    className={`flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl font-bold text-xs sm:text-sm transition-all shadow-md ${
+                      manualMode ? 'bg-amber-500 hover:bg-amber-600 text-slate-950' : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
+                    }`}
+                  >
+                    {manualMode ? '🖐️ 수동 점 끄기' : '🖐️ 수동 점 켜기'}
+                  </button>
+                  <button
+                    onClick={handleResetMap}
+                    className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl font-bold text-xs sm:text-sm bg-rose-600 hover:bg-rose-700 text-white shadow-md transition-all"
+                  >
+                    맵 초기화
+                  </button>
+                </div>
+              </div>
+
+              <div className="lg:col-span-7 flex flex-col gap-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={handleAutoPlace}
+                    disabled={isSolving}
+                    className="flex items-center justify-center gap-2 py-3 px-4 rounded-2xl font-extrabold text-sm sm:text-base bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white shadow-lg transition-all disabled:opacity-50"
+                  >
+                    ▶️ 자동 배치
+                  </button>
+                  <button
+                    onClick={handleUndo}
+                    disabled={history.length === 0}
+                    className="flex items-center justify-center gap-2 py-3 px-4 rounded-2xl font-extrabold text-sm sm:text-base bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white shadow-lg transition-all disabled:opacity-40"
+                  >
+                    ↩️ 되돌리기
+                  </button>
+                </div>
+
+                {message && (
+                  <div className="bg-slate-800/90 border border-slate-700 rounded-xl py-2 px-4 text-xs sm:text-sm text-indigo-300 flex items-center justify-between shadow-sm">
+                    <span>ℹ️ {message}</span>
+                    <button onClick={() => setMessage('')} className="text-slate-400 hover:text-white ml-2">✕</button>
+                  </div>
+                )}
+
+                <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-2xl flex flex-col">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="font-bold text-lg text-slate-100">
+                      블록 선택 <span className="text-pink-400 font-mono">({selectedBlockIds.length}/3)</span>
+                    </span>
+                    {selectedBlockIds.length > 0 && (
+                      <button onClick={() => setSelectedBlockIds([])} className="text-xs text-slate-400 hover:text-rose-400 px-2 py-1 rounded-md bg-slate-800">
+                        ✕ 선택 전체 취소
+                      </button>
+                    )}
+                  </div>
+
+                  <p className="text-xs text-slate-400 mb-4">
+                    블록을 최대 3개 고르고 자동 배치를 누르면 가장 좋은 자리에 놓아줘요.
+                  </p>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-[500px] overflow-y-auto pr-1">
+                    {blocks.map(block => {
+                      const isSelected = selectedBlockIds.includes(block.id);
+                      return (
+                        <div
+                          key={block.id}
+                          onClick={() => handleSelectBlock(block.id)}
+                          className={`relative group cursor-pointer bg-[#0d1117] border rounded-xl p-2.5 flex flex-col items-center justify-between transition-all ${
+                            isSelected ? 'border-pink-500 ring-2 ring-pink-500/30 bg-pink-950/20 shadow-md' : 'border-slate-800 hover:border-slate-600 hover:bg-[#121720]'
+                          }`}
+                        >
+                          <div className="w-full flex justify-between items-center mb-2">
+                            <span className="text-[11px] font-bold text-slate-400 bg-slate-800/80 px-2 py-0.5 rounded-full">{block.name}</span>
+                            {isSelected && <span className="w-4 h-4 rounded-full bg-pink-500 flex items-center justify-center text-slate-950 text-[10px] font-bold">✓</span>}
+                          </div>
+
+                          <div className="my-2 p-2 flex items-center justify-center min-h-[64px]">
+                            <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${block.shape[0].length}, minmax(0, 1fr))` }}>
+                              {block.shape.map((row, r) =>
+                                row.map((cell, c) => (
+                                  <div key={`${r}-${c}`} className={`w-3.5 h-3.5 rounded-[2px] ${cell === 1 ? (isSelected ? 'bg-pink-400' : 'bg-emerald-400') : 'bg-transparent'}`} />
+                                ))
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="w-full grid grid-cols-2 gap-1 mt-1 pt-2 border-t border-slate-800/60">
+                            <button onClick={(e) => handleRotateBlock(block.id, e)} className="py-1 px-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px]">↻ 회전</button>
+                            <button onClick={(e) => handleFlipBlock(block.id, e)} className="py-1 px-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px]">⇆ 반전</button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
   </body>
 </html>
