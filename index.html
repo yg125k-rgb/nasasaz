@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>한글 모아모아 퍼즐 솔버 - 마우스 영역 지정 캡처</title>
+    <title>한글 모아모아 퍼즐 솔버 - 스마트 교체 연동</title>
 
     <!-- React 18 & ReactDOM -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
@@ -82,7 +82,6 @@
       const CELL_STYLES = {
         0: { bg: 'bg-[#18202c] hover:bg-[#28384f]', text: '' },
         1: { bg: 'bg-slate-500 border border-slate-300', text: '' },
-        5: { bg: 'bg-gradient-to-br from-amber-500 to-amber-600 border border-amber-300 ring-1 ring-amber-300', text: '🎲', textColor: 'text-amber-950 text-[10px]' },
         2: { bg: 'bg-gradient-to-br from-pink-500 to-rose-600 border border-pink-300/50', text: '1', textColor: 'text-white font-extrabold' },
         3: { bg: 'bg-gradient-to-br from-emerald-500 to-teal-600 border border-emerald-300/50', text: '2', textColor: 'text-white font-extrabold' },
         4: { bg: 'bg-gradient-to-br from-purple-500 to-indigo-600 border border-indigo-300/50', text: '3', textColor: 'text-white font-extrabold' },
@@ -133,7 +132,6 @@
 
       function App() {
         const [board, setBoard] = useState(() => Array(TOTAL_CELLS).fill(0));
-        const [hasItemMap, setHasItemMap] = useState(() => Array(TOTAL_CELLS).fill(false));
         const [lastPlacedIndices, setLastPlacedIndices] = useState([]);
         const [placedGhostOverlay, setPlacedGhostOverlay] = useState({});
         const [placedReport, setPlacedReport] = useState([]);
@@ -147,11 +145,15 @@
         const [history, setHistory] = useState([]);
         const [message, setMessage] = useState('');
 
-        // --- 화면 실시간 캡처 및 영역 지정(드래그) 상태 ---
+        // --- 화면 캡처 및 영역 지정 상태 ---
         const [isCapturing, setIsCapturing] = useState(false);
         const [autoSync, setAutoSync] = useState(false);
         const [showCropModal, setShowCropModal] = useState(false);
-        const [cropRect, setCropRect] = useState(null); // { x, y, width, height } 비율 (0~1)
+        const [cropRect, setCropRect] = useState(null);
+        const [blockSlotsRect, setBlockSlotsRect] = useState(null);
+        const [cropStep, setCropStep] = useState('BOARD');
+        const [tempBoardRect, setTempBoardRect] = useState(null);
+
         const [isDragging, setIsDragging] = useState(false);
         const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
         const [currentDrag, setCurrentDrag] = useState(null);
@@ -173,8 +175,9 @@
               videoRef.current.play();
             }
             setIsCapturing(true);
+            setCropStep('BOARD');
             setShowCropModal(true);
-            setMessage('📹 화면 연동 성공! 마우스로 퍼즐 맵 영역을 사각형으로 드래그해 지정하세요.');
+            setMessage('1단계: 퍼즐 맵(10x16) 영역을 마우스로 드래그하여 지정하세요.');
 
             stream.getVideoTracks()[0].onended = () => {
               setIsCapturing(false);
@@ -199,7 +202,6 @@
           setMessage('화면 연동이 중지되었습니다.');
         };
 
-        // 드래그 영역 저장 및 캔버스 그리기
         const drawModalCanvas = useCallback(() => {
           const video = videoRef.current;
           const canvas = modalCanvasRef.current;
@@ -210,25 +212,14 @@
           canvas.height = video.videoHeight;
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-          // 드래그 중인 사각형 가이드라인 그리기
           if (currentDrag) {
-            ctx.strokeStyle = '#f59e0b';
+            ctx.strokeStyle = cropStep === 'BOARD' ? '#f59e0b' : '#3b82f6';
             ctx.lineWidth = 3;
             ctx.strokeRect(currentDrag.x, currentDrag.y, currentDrag.w, currentDrag.h);
-            ctx.fillStyle = 'rgba(245, 158, 11, 0.15)';
+            ctx.fillStyle = cropStep === 'BOARD' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(59, 130, 246, 0.15)';
             ctx.fillRect(currentDrag.x, currentDrag.y, currentDrag.w, currentDrag.h);
-          } else if (cropRect) {
-            const rx = cropRect.x * canvas.width;
-            const ry = cropRect.y * canvas.height;
-            const rw = cropRect.w * canvas.width;
-            const rh = cropRect.h * canvas.height;
-            ctx.strokeStyle = '#10b981';
-            ctx.lineWidth = 3;
-            ctx.strokeRect(rx, ry, rw, rh);
-            ctx.fillStyle = 'rgba(16, 185, 129, 0.15)';
-            ctx.fillRect(rx, ry, rw, rh);
           }
-        }, [currentDrag, cropRect]);
+        }, [currentDrag, cropStep]);
 
         useEffect(() => {
           let animId = null;
@@ -284,45 +275,111 @@
           setIsDragging(false);
 
           if (canvas && currentDrag.w > 20 && currentDrag.h > 20) {
-            setCropRect({
+            const rectObj = {
               x: currentDrag.x / canvas.width,
               y: currentDrag.y / canvas.height,
               w: currentDrag.w / canvas.width,
               h: currentDrag.h / canvas.height
-            });
-            setMessage('✅ 영역 지정 완료! 이제 맵 상태가 선택한 사각형에 맞춰 연동됩니다.');
+            };
+
+            if (cropStep === 'BOARD') {
+              setTempBoardRect(rectObj);
+              setCropStep('BLOCKS');
+              setMessage('2단계: 우측에 있는 3개의 보유 블록 영역 전체를 마우스로 드래그해 지정하세요.');
+            } else {
+              setCropRect(tempBoardRect);
+              setBlockSlotsRect(rectObj);
+              setShowCropModal(false);
+              setAutoSync(true);
+              setMessage('✅ 영역 지정 완료! 실시간 자동 인식이 시작됩니다.');
+            }
           }
           setCurrentDrag(null);
         };
 
-        // 지정 영역(Crop) 분석 로직
+        const isBlockPixel = (r, g, b) => {
+          const isBackground = r < 110 && g > 140 && b > 160;
+          if (isBackground) return false;
+
+          const isPink = r > 160 && g < 140 && b > 120;
+          const isYellow = r > 180 && g > 160 && b < 130;
+          const isGreen = r < 140 && g > 150 && b < 140;
+          const isBlueOrPurple = r > 80 && g > 80 && b > 150 && !isBackground;
+          const isDarkOrBrightBlock = (r > 60 || g > 60 || b > 60) && Math.abs(r - g) > 20 || (r > 150 && g > 150 && b > 150);
+
+          return isPink || isYellow || isGreen || isBlueOrPurple || isDarkOrBrightBlock;
+        };
+
+        const analyzeBlockSlots = (ctx, canvasWidth, canvasHeight, slotsRect) => {
+          if (!slotsRect) return;
+          const sx = slotsRect.x * canvasWidth;
+          const sy = slotsRect.y * canvasHeight;
+          const sw = slotsRect.w * canvasWidth;
+          const sh = slotsRect.h * canvasHeight;
+
+          const slotH = sh / 3;
+          const detectedIds = [];
+
+          for (let i = 0; i < 3; i++) {
+            const subSy = sy + (i * slotH) + (slotH * 0.1);
+            const subSh = slotH * 0.8;
+            const subSx = sx + (sw * 0.1);
+            const subSw = sw * 0.8;
+
+            const gridRows = 5;
+            const gridCols = 5;
+            let cellCount = 0;
+
+            for (let r = 0; r < gridRows; r++) {
+              for (let c = 0; c < gridCols; c++) {
+                const px = Math.floor(subSx + (c + 0.5) * (subSw / gridCols));
+                const py = Math.floor(subSy + (r + 0.5) * (subSh / gridRows));
+                if (px >= 0 && px < canvasWidth && py >= 0 && py < canvasHeight) {
+                  const pixel = ctx.getImageData(px, py, 1, 1).data;
+                  if (isBlockPixel(pixel[0], pixel[1], pixel[2])) {
+                    cellCount++;
+                  }
+                }
+              }
+            }
+
+            if (cellCount > 0) {
+              let bestMatchId = 3;
+              let minDiff = Infinity;
+              blocks.forEach(tmpl => {
+                const diff = Math.abs(tmpl.size - cellCount);
+                if (diff < minDiff) {
+                  minDiff = diff;
+                  bestMatchId = tmpl.id;
+                }
+              });
+              detectedIds.push(bestMatchId);
+            }
+          }
+
+          if (detectedIds.length > 0) {
+            setSelectedBlockIds(detectedIds);
+          }
+        };
+
         const captureAndAnalyzeFrame = useCallback(() => {
           const video = videoRef.current;
           const canvas = canvasRef.current;
-          if (!video || !canvas || video.readyState !== 4) return;
+          if (!video || !canvas || video.readyState !== 4 || !cropRect) return;
 
           const ctx = canvas.getContext('2d', { willReadFrequently: true });
           canvas.width = video.videoWidth;
           canvas.height = video.videoHeight;
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-          let startX = 0;
-          let startY = 0;
-          let mapWidth = canvas.width;
-          let mapHeight = canvas.height;
-
-          if (cropRect) {
-            startX = cropRect.x * canvas.width;
-            startY = cropRect.y * canvas.height;
-            mapWidth = cropRect.w * canvas.width;
-            mapHeight = cropRect.h * canvas.height;
-          }
+          const startX = cropRect.x * canvas.width;
+          const startY = cropRect.y * canvas.height;
+          const mapWidth = cropRect.w * canvas.width;
+          const mapHeight = cropRect.h * canvas.height;
 
           const cellW = mapWidth / BOARD_COLS;
           const cellH = mapHeight / BOARD_ROWS;
-
           const newBoard = Array(TOTAL_CELLS).fill(0);
-          const newHasItemMap = Array(TOTAL_CELLS).fill(false);
 
           for (let r = 0; r < BOARD_ROWS; r++) {
             for (let c = 0; c < BOARD_COLS; c++) {
@@ -330,25 +387,19 @@
               const centerY = Math.floor(startY + r * cellH + cellH / 2);
               const pixel = ctx.getImageData(centerX, centerY, 1, 1).data;
 
-              const red = pixel[0];
-              const green = pixel[1];
-              const blue = pixel[2];
               const idx = r * BOARD_COLS + c;
-
-              // 아이템 점(🎲) 판단
-              if (red > 180 && green > 130 && blue < 80) {
-                newHasItemMap[idx] = true;
-              } 
-              // 일반 수동점 및 설치된 블록
-              else if (red > 80 || green > 80 || blue > 80) {
+              if (isBlockPixel(pixel[0], pixel[1], pixel[2])) {
                 newBoard[idx] = 1;
               }
             }
           }
 
           setBoard(newBoard);
-          setHasItemMap(newHasItemMap);
-        }, [cropRect]);
+
+          if (blockSlotsRect) {
+            analyzeBlockSlots(ctx, canvas.width, canvas.height, blockSlotsRect);
+          }
+        }, [cropRect, blockSlotsRect, blocks]);
 
         useEffect(() => {
           let intervalId = null;
@@ -367,7 +418,6 @@
             ...prev,
             {
               board: [...board],
-              hasItemMap: [...hasItemMap],
               lastPlacedIndices: [...lastPlacedIndices],
               placedGhostOverlay: { ...placedGhostOverlay },
               placedReport: [...placedReport],
@@ -377,13 +427,12 @@
               rerollCount
             }
           ]);
-        }, [board, hasItemMap, lastPlacedIndices, placedGhostOverlay, placedReport, placedBlocksCount, clearedLinesCount, selectedBlockIds, rerollCount]);
+        }, [board, lastPlacedIndices, placedGhostOverlay, placedReport, placedBlocksCount, clearedLinesCount, selectedBlockIds, rerollCount]);
 
         const handleUndo = useCallback(() => {
           if (history.length === 0) return;
           const lastState = history[history.length - 1];
           setBoard(lastState.board);
-          setHasItemMap(lastState.hasItemMap || Array(TOTAL_CELLS).fill(false));
           setLastPlacedIndices(lastState.lastPlacedIndices || []);
           setPlacedGhostOverlay(lastState.placedGhostOverlay || {});
           setPlacedReport(lastState.placedReport || []);
@@ -397,32 +446,19 @@
         }, [history]);
 
         const handleCellClick = (index) => {
-          if (clickMode === 'OFF') {
-            setMessage('수동 클릭 모드가 꺼져 있습니다.');
-            return;
-          }
+          if (clickMode === 'OFF') return;
           saveHistory();
-          
-          if (clickMode === 'NORMAL') {
-            setBoard(prevBoard => {
-              const nextBoard = [...prevBoard];
-              nextBoard[index] = nextBoard[index] === 1 ? 0 : 1;
-              return nextBoard;
-            });
-          } else if (clickMode === 'ITEM') {
-            setHasItemMap(prev => {
-              const next = [...prev];
-              next[index] = !next[index];
-              return next;
-            });
-          }
+          setBoard(prevBoard => {
+            const nextBoard = [...prevBoard];
+            nextBoard[index] = nextBoard[index] === 1 ? 0 : 1;
+            return nextBoard;
+          });
           setLastPlacedIndices(prev => prev.filter(i => i !== index));
         };
 
         const handleResetMap = () => {
           saveHistory();
           setBoard(Array(TOTAL_CELLS).fill(0));
-          setHasItemMap(Array(TOTAL_CELLS).fill(false));
           setLastPlacedIndices([]);
           setPlacedGhostOverlay({});
           setPlacedReport([]);
@@ -449,7 +485,6 @@
             const count = prev.filter(bId => bId === id).length;
             if (count > 0 && (prev.length >= 3 || count >= 2)) {
               const lastIdx = prev.lastIndexOf(id);
-              setMessage('선택된 블록 1개가 취소되었습니다.');
               return prev.filter((_, idx) => idx !== lastIdx);
             }
             if (prev.length < 3) {
@@ -467,7 +502,7 @@
 
         const executePlacement = (bestResult) => {
           saveHistory();
-          const { steps, grid, nextHasItemMap, cleared, itemsCollected } = bestResult;
+          const { steps, grid, cleared } = bestResult;
           let ghostOverlayMap = {};
           let finalPlacedIndices = [];
           let stepReports = [];
@@ -488,20 +523,15 @@
           });
 
           setBoard(Array.from(grid));
-          setHasItemMap(nextHasItemMap);
           setLastPlacedIndices(finalPlacedIndices);
           setPlacedGhostOverlay(ghostOverlayMap);
           setPlacedReport(stepReports);
           setPlacedBlocksCount(prev => prev + steps.length);
           setClearedLinesCount(prev => prev + cleared);
-          if (itemsCollected > 0) {
-            setRerollCount(prev => prev + itemsCollected);
-          }
           setSelectedBlockIds([]);
           setPendingBadMove(null);
 
-          const itemMsg = itemsCollected > 0 ? ` 🎲 교체 기회 +${itemsCollected}회 획득!` : '';
-          setMessage(`⚡ 배치 완료! (${steps.length}개 설치, ${cleared}줄 파괴${itemMsg})`);
+          setMessage(`⚡ 배치 완료! (${steps.length}개 설치, ${cleared}줄 파괴)`);
         };
 
         const handleAutoPlace = useCallback((force = false) => {
@@ -573,9 +603,8 @@
             return (linesCleared * 350) - (holes * 50) - (aggregateHeight * 3) - (bumpiness * 5);
           };
 
-          const applyMoveFast = (grid, itemMap, shape, startR, startC, marker) => {
+          const applyMoveFast = (grid, shape, startR, startC, marker) => {
             const nextGrid = new Int32Array(grid);
-            const nextHasItemMap = [...itemMap];
             const placedIndices = [];
             const h = shape.length;
             const w = shape[0].length;
@@ -591,33 +620,27 @@
             }
 
             let clearedLines = 0;
-            let itemsCollected = 0;
-
             for (let r = 0; r < BOARD_ROWS; r++) {
               let full = true;
-              const rOffset = r * BOARD_COLS;
-
+              const rOffset = r * BOARD_ROWS; // corrected offset logic below
+              // fix loop offset
+              let rowFull = true;
+              const curOffset = r * BOARD_COLS;
               for (let c = 0; c < BOARD_COLS; c++) {
-                if (nextGrid[rOffset + c] === 0) {
-                  full = false;
+                if (nextGrid[curOffset + c] === 0) {
+                  rowFull = false;
                   break;
                 }
               }
-
-              if (full) {
+              if (rowFull) {
                 clearedLines++;
                 for (let c = 0; c < BOARD_COLS; c++) {
-                  const idx = rOffset + c;
-                  if (nextHasItemMap[idx]) {
-                    itemsCollected++;
-                    nextHasItemMap[idx] = false;
-                  }
-                  nextGrid[idx] = 0;
+                  nextGrid[curOffset + c] = 0;
                 }
               }
             }
 
-            return { nextGrid, nextHasItemMap, clearedLines, itemsCollected, placedIndices };
+            return { nextGrid, clearedLines, placedIndices };
           };
 
           const permutations = getPermutations(inputBlocks);
@@ -626,7 +649,7 @@
           const currentGrid = new Int32Array(board);
 
           for (const blockOrder of permutations) {
-            let candidates = [{ grid: currentGrid, nextHasItemMap: hasItemMap, steps: [], score: 0, cleared: 0, itemsCollected: 0 }];
+            let candidates = [{ grid: currentGrid, steps: [], score: 0, cleared: 0 }];
 
             for (let bIdx = 0; bIdx < blockOrder.length; bIdx++) {
               const block = blockOrder[bIdx];
@@ -641,14 +664,7 @@
                     for (let c = 0; c <= BOARD_COLS - w; c++) {
                       if (canPlace(cand.grid, shape, r, c)) {
                         const marker = bIdx + 2;
-                        const { nextGrid, nextHasItemMap, clearedLines, itemsCollected, placedIndices } = applyMoveFast(
-                          cand.grid,
-                          cand.nextHasItemMap,
-                          shape,
-                          r,
-                          c,
-                          marker
-                        );
+                        const { nextGrid, clearedLines, placedIndices } = applyMoveFast(cand.grid, shape, r, c, marker);
                         const evalScore = evaluateFast(nextGrid);
                         
                         const stepInfo = {
@@ -662,15 +678,13 @@
                           cleared: clearedLines
                         };
 
-                        const totalCandScore = cand.score + evalScore + (clearedLines * 1000) + (itemsCollected * 1000);
+                        const totalCandScore = cand.score + evalScore + (clearedLines * 1000);
 
                         nextCandidates.push({
                           grid: nextGrid,
-                          nextHasItemMap,
                           steps: [...cand.steps, stepInfo],
                           score: totalCandScore,
-                          cleared: cand.cleared + clearedLines,
-                          itemsCollected: cand.itemsCollected + itemsCollected
+                          cleared: cand.cleared + clearedLines
                         });
                       }
                     }
@@ -688,24 +702,21 @@
             }
           }
 
-          const REROLL_THRESHOLD_SCORE = -100;
-          const isBadMove = !bestResult || (bestResult.cleared === 0 && bestResult.itemsCollected === 0 && maxTotalScore < REROLL_THRESHOLD_SCORE);
+          const REROLL_THRESHOLD_SCORE = -50;
+          const isBadMove = !bestResult || (bestResult.cleared === 0 && maxTotalScore < REROLL_THRESHOLD_SCORE);
 
           if (!force && rerollCount > 0 && isBadMove) {
-            setPendingBadMove({
-              bestResult,
-              worstBlockName: inputBlocks[0].name
-            });
-            setMessage(`⛔ 비효율적인 배치 위험 감지! [자동 배치 중단됨]`);
+            setPendingBadMove({ bestResult });
+            setMessage('💡 배치 효율이 좋지 않습니다. 교체(Reroll)하는 것이 더 좋습니다!');
             return;
           }
 
           if (bestResult && bestResult.steps.length > 0) {
             executePlacement(bestResult);
           } else {
-            setMessage('선택한 블록을 배치할 수 있는 자리가 없습니다.');
+            setMessage('선택한 블록을 배치할 수 있는 자리가 없습니다. 교체하는 것을 추천합니다.');
           }
-        }, [selectedBlockIds, blocks, board, hasItemMap, rerollCount]);
+        }, [selectedBlockIds, blocks, board, rerollCount]);
 
         const handleUseRerollOnly = () => {
           if (rerollCount <= 0) return;
@@ -713,7 +724,7 @@
           setRerollCount(prev => prev - 1);
           setSelectedBlockIds([]);
           setPendingBadMove(null);
-          setMessage('🎲 배치를 하지 않고 교체 기회만 1회 차감했습니다! 새 블록을 선택해주세요.');
+          setMessage('🎲 교체 기회를 사용했습니다! 슬롯이 비워졌습니다.');
         };
 
         const handleAddReroll = () => {
@@ -732,13 +743,13 @@
             <video ref={videoRef} className="hidden" />
             <canvas ref={canvasRef} className="hidden" />
 
-            {/* 마우스 드래그 영역 지정 팝업 모달 */}
+            {/* 영역 지정 모달 */}
             {showCropModal && (
               <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex flex-col items-center justify-center p-4">
                 <div className="bg-[#161b22] border border-slate-700 rounded-2xl p-4 max-w-4xl w-full flex flex-col items-center shadow-2xl">
                   <div className="w-full flex justify-between items-center mb-2">
                     <span className="font-extrabold text-amber-300 text-sm sm:text-base">
-                      🖱 마우스로 퍼즐 맵 영역을 드래그해 지정하세요
+                      {cropStep === 'BOARD' ? '1단계: 퍼즐 맵(10x16) 영역을 드래그하세요' : '2단계: 우측 3개 블록 영역을 드래그하세요'}
                     </span>
                     <button
                       onClick={() => {
@@ -747,11 +758,11 @@
                       }}
                       className="py-1 px-3 bg-emerald-600 text-white rounded-lg font-bold text-xs hover:bg-emerald-500"
                     >
-                      설정 완료 & 동기화 시작
+                      건너뛰기 & 동기화 시작
                     </button>
                   </div>
                   <p className="text-xs text-slate-400 mb-2">
-                    마우스로 사각형을 그리면 해당 위치가 10x16 솔버 보드로 자동 연동됩니다.
+                    {cropStep === 'BOARD' ? '게임의 10x16 격자 보드판 테두리를 마우스로 감싸주세요.' : '우측의 보유 블록 3개가 들어있는 영역 전체를 감싸주세요.'}
                   </p>
                   <div className="relative border-2 border-dashed border-amber-500/60 rounded-lg overflow-hidden max-h-[70vh]">
                     <canvas
@@ -767,13 +778,13 @@
             )}
 
             <div className="w-full max-w-6xl flex flex-col gap-3">
-              {/* 화면 연동 컨트롤러 */}
+              {/* 컨트롤러 바 */}
               <div className="bg-[#161b22] border border-indigo-500/30 rounded-xl p-2.5 flex items-center justify-between shadow-lg">
                 <div className="flex items-center gap-2">
                   <span className="text-lg">📷</span>
                   <div>
-                    <span className="font-extrabold text-xs sm:text-sm text-indigo-300">게임 화면 마우스 영역 지정 캡처</span>
-                    <p className="text-[10px] text-slate-400">원하는 탭 창의 퍼즐 맵 영역만 직접 드래그해서 캡처합니다.</p>
+                    <span className="font-extrabold text-xs sm:text-sm text-indigo-300">화면 자동 캡처 및 블록 인식</span>
+                    <p className="text-[10px] text-slate-400">맵과 우측 블록 3개를 실시간으로 인식합니다.</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -787,10 +798,10 @@
                   ) : (
                     <div className="flex items-center gap-1.5">
                       <button
-                        onClick={() => setShowCropModal(true)}
+                        onClick={() => { setCropStep('BOARD'); setShowCropModal(true); }}
                         className="py-1.5 px-2.5 rounded-lg font-bold text-xs bg-amber-500 text-slate-950 hover:bg-amber-400 shadow"
                       >
-                        🖱 영역 다시 그리기
+                        🖱 영역 재설정
                       </button>
                       <button
                         onClick={captureAndAnalyzeFrame}
@@ -800,7 +811,7 @@
                       </button>
                       <button
                         onClick={handleStopCapture}
-                        className="py-1.5 px-2 rounded-lg font-bold text-xs bg-rose-600 hover:bg-rose-500 text-white shadow"
+                        className="py-1.5 px-2 rounded-lg font-bold text-xs bg-rose-600 hover:bg-rose-700 text-white shadow"
                       >
                         ⏹ 중지
                       </button>
@@ -820,18 +831,10 @@
                     </div>
                   </div>
 
-                  <div className="w-full flex justify-center items-center gap-2 mb-1.5 text-[10px] font-bold flex-wrap">
-                    <span className="flex items-center gap-1 text-slate-300"><span className="w-2.5 h-2.5 rounded bg-slate-500 border border-slate-300 inline-block"></span> 수동 점</span>
-                    <span className="flex items-center gap-1 text-amber-300"><span className="w-2.5 h-2.5 rounded bg-amber-500 border border-amber-300 inline-block text-center text-[8px]">🎲</span> 아이템점(중첩가능)</span>
-                    <span className="flex items-center gap-1 text-pink-400"><span className="w-2.5 h-2.5 rounded bg-pink-500 inline-block text-center text-[8px] text-white">1</span> 1번</span>
-                    <span className="flex items-center gap-1 text-emerald-400"><span className="w-2.5 h-2.5 rounded bg-emerald-500 inline-block text-center text-[8px] text-white">2</span> 2번</span>
-                  </div>
-
                   <div className="board-grid-wrapper my-1">
                     <div className="board-grid-container">
                       {board.map((cellValue, idx) => {
-                        const hasItem = hasItemMap[idx];
-                        const style = cellValue > 0 ? CELL_STYLES[cellValue] : (hasItem ? CELL_STYLES[5] : CELL_STYLES[0]);
+                        const style = CELL_STYLES[cellValue];
                         const isJustPlaced = lastPlacedIndices.includes(idx);
                         const ghostMarker = placedGhostOverlay[idx];
 
@@ -845,10 +848,6 @@
                               !isJustPlaced && ghostMarker ? 'border border-dashed border-amber-300/60 bg-amber-500/10' : ''
                             }`}
                           >
-                            {cellValue > 0 && hasItem && (
-                              <span className="absolute -top-1 -right-1 text-[8px] bg-amber-400 text-slate-950 rounded-full w-2.5 h-2.5 flex items-center justify-center font-black z-20">🎲</span>
-                            )}
-
                             {style.text ? (
                               <span className={style.textColor}>{style.text}</span>
                             ) : ghostMarker ? (
@@ -885,26 +884,18 @@
                     </div>
                   )}
 
-                  <div className="w-full grid grid-cols-3 gap-1.5 mt-3">
+                  <div className="w-full grid grid-cols-2 gap-2 mt-3">
                     <button
-                      onClick={() => setClickMode('NORMAL')}
-                      className={`py-1.5 px-1 rounded-lg font-bold text-xs transition-all shadow ${
+                      onClick={() => setClickMode(clickMode === 'NORMAL' ? 'OFF' : 'NORMAL')}
+                      className={`py-1.5 px-2 rounded-lg font-bold text-xs transition-all shadow ${
                         clickMode === 'NORMAL' ? 'bg-slate-300 text-slate-950 ring-2 ring-white' : 'bg-slate-800 text-slate-300'
                       }`}
                     >
-                      ⚪ 일반 수동점
-                    </button>
-                    <button
-                      onClick={() => setClickMode('ITEM')}
-                      className={`py-1.5 px-1 rounded-lg font-bold text-xs transition-all shadow ${
-                        clickMode === 'ITEM' ? 'bg-amber-500 text-slate-950 ring-2 ring-amber-300' : 'bg-slate-800 text-slate-300'
-                      }`}
-                    >
-                      🎲 아이템점
+                      {clickMode === 'NORMAL' ? '수동 수정 모드 ON' : '수동 수정 모드 OFF'}
                     </button>
                     <button
                       onClick={handleResetMap}
-                      className="py-1.5 px-1 rounded-lg font-bold text-xs bg-rose-600 hover:bg-rose-700 text-white shadow transition-all"
+                      className="py-1.5 px-2 rounded-lg font-bold text-xs bg-rose-600 hover:bg-rose-700 text-white shadow transition-all"
                     >
                       맵 초기화
                     </button>
@@ -913,12 +904,13 @@
 
                 {/* 오른쪽 컨트롤 및 블록 목록 */}
                 <div className="lg:col-span-7 flex flex-col gap-3 w-full">
+                  {/* 교체 기회 관리 바 */}
                   <div className="bg-[#161b22] border border-amber-500/30 rounded-xl p-2.5 sm:p-3 flex items-center justify-between shadow-lg">
                     <div className="flex items-center gap-2">
                       <span className="text-lg">🎲</span>
                       <div>
                         <span className="font-extrabold text-xs sm:text-sm text-amber-300">남은 블록 교체 기회</span>
-                        <p className="text-[10px] text-slate-400">🎲 아이템 점 위에 블록을 놓아 줄을 제거하면 기회 획득!</p>
+                        <p className="text-[10px] text-slate-400">버튼으로 기회를 늘리거나 교체를 실행할 수 있습니다.</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5">
@@ -942,26 +934,26 @@
                   </div>
 
                   {pendingBadMove && (
-                    <div className="bg-rose-950/90 border-2 border-rose-500/80 rounded-xl p-3 flex flex-col gap-2 shadow-2xl">
+                    <div className="bg-amber-950/90 border-2 border-amber-500/80 rounded-xl p-3 flex flex-col gap-2 shadow-2xl">
                       <div className="flex items-center gap-2">
-                        <span className="text-base">🚨</span>
-                        <span className="text-xs font-black text-rose-300">자동 배치가 사전 중단되었습니다</span>
+                        <span className="text-base">💡</span>
+                        <span className="text-xs font-black text-amber-300">스마트 추천: 교체가 더 유리합니다!</span>
                       </div>
-                      <p className="text-xs text-rose-100">
-                        배치 효율이 매우 떨어집니다. <strong>배치 없이 교체</strong>만 진행하시겠습니까?
+                      <p className="text-xs text-amber-100">
+                        현재 블록들을 억지로 배치하면 보드 효율이 크게 나빠집니다. <strong>배치를 취소하고 교체 기회를 사용</strong>하시겠습니까?
                       </p>
                       <div className="flex items-center justify-end gap-2 mt-0.5">
                         <button
                           onClick={() => handleAutoPlace(true)}
                           className="py-1 px-2.5 rounded-lg text-[11px] font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700"
                         >
-                          그냥 배치하기
+                          그냥 강제 배치하기
                         </button>
                         <button
                           onClick={handleUseRerollOnly}
                           className="py-1.5 px-3 rounded-lg text-xs font-black bg-amber-400 text-slate-950 hover:bg-amber-300 shadow"
                         >
-                          🎲 배치 취소 후 교체하기 ({rerollCount}회 보유)
+                          🎲 배치 취소 및 교체하기 ({rerollCount}회 보유)
                         </button>
                       </div>
                     </div>
@@ -993,7 +985,7 @@
                   <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-3 shadow-xl flex flex-col">
                     <div className="flex justify-between items-center mb-1.5">
                       <span className="font-bold text-sm text-slate-100">
-                        블록 선택 <span className="text-pink-400 font-mono">({selectedBlockIds.length}/3)</span>
+                        인식된 블록 슬롯 <span className="text-pink-400 font-mono">({selectedBlockIds.length}/3)</span>
                       </span>
                       {selectedBlockIds.length > 0 && (
                         <button onClick={() => setSelectedBlockIds([])} className="text-[10px] text-slate-400 hover:text-rose-400 px-2 py-0.5 rounded bg-slate-800">
@@ -1015,7 +1007,7 @@
                           </div>
                         ) : (
                           <div key={slotIdx} className="flex items-center justify-center bg-slate-900/60 border border-dashed border-slate-800 px-2.5 py-0.5 rounded-md text-[10px] text-slate-600 font-medium">
-                            슬롯 {slotIdx + 1}
+                            대기 중... {slotIdx + 1}
                           </div>
                         );
                       })}
