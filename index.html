@@ -42,7 +42,7 @@
     <script type="text/babel">
       const { useState, useCallback } = React;
 
-      // 이미지와 100% 일치하도록 수정된 19개 블록 템플릿
+      // 이미지 기반 정밀 수정 19개 블록 템플릿
       const INITIAL_BLOCK_TEMPLATES = [
         { id: 1, name: '1칸', size: 1, shape: [[1]] },
         { id: 2, name: '3칸', size: 3, shape: [[0, 1, 0], [1, 0, 1]] },
@@ -54,15 +54,15 @@
         { id: 8, name: '5칸', size: 5, shape: [[1, 1], [1, 0], [1, 1]] },
         { id: 9, name: '5칸', size: 5, shape: [[1, 1, 1, 1, 1]] },
         { id: 10, name: '6칸', size: 6, shape: [[1, 1, 1], [0, 1, 0], [1, 0, 1]] },
-        { id: 11, name: '6칸', size: 6, shape: [[1, 1], [0, 1], [1, 1], [0, 1]] }, // 6칸 이미지와 정밀 매칭
+        { id: 11, name: '6칸', size: 6, shape: [[1, 1], [0, 1], [1, 1], [0, 1]] },
         { id: 12, name: '7칸', size: 7, shape: [[1, 0], [1, 1], [1, 0], [1, 1], [1, 0]] },
         { id: 13, name: '7칸', size: 7, shape: [[0, 1, 0], [1, 1, 1], [0, 1, 0], [1, 0, 1]] },
         { id: 14, name: '8칸', size: 8, shape: [[1, 1, 1], [1, 0, 1], [1, 1, 1]] },
-        { id: 15, name: '8칸', size: 8, shape: [[1, 1], [0, 1], [1, 1], [1, 0], [1, 1]] }, // 8칸 이미지와 정밀 매칭
+        { id: 15, name: '8칸', size: 8, shape: [[1, 1], [0, 1], [1, 1], [1, 0], [1, 1]] },
         { id: 16, name: '8칸', size: 8, shape: [[1, 1], [1, 0], [1, 1], [1, 0], [1, 1]] },
-        { id: 17, name: '9칸', size: 9, shape: [[0, 0, 1, 0, 0], [1, 1, 1, 1, 1], [0, 1, 1, 1, 0]] },
+        { id: 17, name: '9칸', size: 9, shape: [[0, 0, 1, 0, 0], [1, 1, 1, 1, 1], [0, 1, 0, 1, 0], [0, 0, 1, 0, 0]] },
         { id: 18, name: '10칸', size: 10, shape: [[1, 0, 1], [1, 1, 1], [1, 0, 1], [1, 1, 1]] },
-        { id: 19, name: '10칸', size: 10, shape: [[1, 0, 1], [1, 1, 1], [1, 1, 1], [1, 0, 1]] } // 10칸 이미지와 정밀 매칭
+        { id: 19, name: '10칸', size: 10, shape: [[1, 0, 1], [1, 1, 1], [1, 1, 1], [1, 0, 1]] }
       ];
 
       const BOARD_COLS = 10;
@@ -180,12 +180,27 @@
           setBlocks(prev => prev.map(b => b.id === id ? { ...b, shape: flipMatrix(b.shape) } : b));
         };
 
+        // 선택 / 중복 / 취소 순환 알고리즘 적용
         const handleSelectBlock = (id) => {
-          if (selectedBlockIds.length >= 3) {
+          setSelectedBlockIds(prev => {
+            const count = prev.filter(bId => bId === id).length;
+
+            // 이미 선택되어 있는 블록인데 더 이상 추가할 공간이 없거나, 
+            // 2개 이상 선택되어 다시 클릭된 경우 ➔ 하나 제거(취소)
+            if (count > 0 && (prev.length >= 3 || count >= 2)) {
+              const lastIdx = prev.lastIndexOf(id);
+              setMessage('선택된 블록 1개가 취소되었습니다.');
+              return prev.filter((_, idx) => idx !== lastIdx);
+            }
+
+            // 슬롯에 여유가 있으면 추가 (중복 허용)
+            if (prev.length < 3) {
+              return [...prev, id];
+            }
+
             setMessage('블록은 최대 3개까지만 선택할 수 있습니다.');
-            return;
-          }
-          setSelectedBlockIds(prev => [...prev, id]);
+            return prev;
+          });
         };
 
         const handleRemoveSelectedAt = (index, e) => {
@@ -359,7 +374,7 @@
                 한글 모아모아 퍼즐 솔버
               </h1>
               <p className="text-xs sm:text-sm text-slate-400 mt-1">
-                6칸, 8칸, 10칸 블록의 형태 수정을 완료했습니다
+                카드를 클릭하여 선택, 중복 추가, 취소를 자유롭게 제어할 수 있습니다
               </p>
             </header>
 
@@ -483,7 +498,7 @@
                   </div>
 
                   <p className="text-xs text-slate-400 my-2">
-                    동일한 블록 카드를 여러 번 눌러 중복 선택할 수 있습니다. (최대 3개)
+                    💡 카드를 한 번 누르면 선택/중복 추가되고, 한 번 더 누르면 선택이 취소됩니다.
                   </p>
 
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-[460px] overflow-y-auto pr-1">
