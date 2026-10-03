@@ -9,13 +9,12 @@
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     
-    <!-- Babel JS (React JSX 변환) -->
+    <!-- Babel JS -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-      /* 맵 그리드 레이아웃 고정 CSS */
       .board-grid-wrapper {
         width: 100%;
         max-width: 320px;
@@ -31,7 +30,6 @@
         padding: 4px;
         border-radius: 8px;
       }
-      /* 셀 하나하나가 완벽한 정사각형을 유지하도록 설정 */
       .cell-item {
         aspect-ratio: 1 / 1;
         width: 100%;
@@ -42,7 +40,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-      const { useState, useEffect, useCallback } = React;
+      const { useState, useCallback } = React;
 
       const INITIAL_BLOCK_TEMPLATES = [
         { id: 1, name: '1칸', size: 1, shape: [[1]] },
@@ -82,6 +80,21 @@
       };
 
       const flipMatrix = (matrix) => matrix.map(row => [...row].reverse());
+
+      const getAllOrientations = (initialShape) => {
+        const orientations = [];
+        const keys = new Set();
+        let current = initialShape;
+        for (let r = 0; r < 4; r++) {
+          const k1 = JSON.stringify(current);
+          if (!keys.has(k1)) { keys.add(k1); orientations.push(current); }
+          const flipped = flipMatrix(current);
+          const k2 = JSON.stringify(flipped);
+          if (!keys.has(k2)) { keys.add(k2); orientations.push(flipped); }
+          current = rotateMatrix(current);
+        }
+        return orientations;
+      };
 
       function App() {
         const [board, setBoard] = useState(() => 
@@ -191,97 +204,101 @@
           return { grid: remainingRows, clearedLines: cleared };
         };
 
-        const getAllOrientations = (initialShape) => {
-          const orientations = [];
-          const keys = new Set();
-          let current = initialShape;
-          for (let r = 0; r < 4; r++) {
-            const k1 = JSON.stringify(current);
-            if (!keys.has(k1)) { keys.add(k1); orientations.push(current); }
-            const flipped = flipMatrix(current);
-            const k2 = JSON.stringify(flipped);
-            if (!keys.has(k2)) { keys.add(k2); orientations.push(flipped); }
-            current = rotateMatrix(current);
-          }
-          return orientations;
-        };
-
+        // 최적화된 비동기 자동 배치 함수
         const handleAutoPlace = useCallback(() => {
           if (selectedBlockIds.length === 0) {
             setMessage('배치할 블록을 1개 이상 선택해 주세요.');
             return;
           }
+
           setIsSolving(true);
           setMessage('최적의 배치를 계산 중입니다...');
 
+          // UI 렌더링 후 계산을 비동기로 시작
           setTimeout(() => {
-            saveHistory();
-            const chosenBlocks = selectedBlockIds.map(id => blocks.find(b => b.id === id));
-            
-            const getPermutations = (arr) => {
-              if (arr.length <= 1) return [arr];
-              const res = [];
-              for (let i = 0; i < arr.length; i++) {
-                const current = arr[i];
-                const remaining = arr.slice(0, i).concat(arr.slice(i + 1));
-                const perms = getPermutations(remaining);
-                for (let p of perms) res.push([current, ...p]);
-              }
-              return res;
-            };
+            try {
+              saveHistory();
+              const chosenBlocks = selectedBlockIds.map(id => blocks.find(b => b.id === id));
+              
+              // 각 블록의 모양 정보 사전 생성
+              const blockOrientations = chosenBlocks.map(b => getAllOrientations(b.shape));
 
-            const blockOrders = getPermutations(chosenBlocks);
-            let bestPlacement = null;
-            let maxScore = -999999;
+              const getPermutations = (arr) => {
+                if (arr.length <= 1) return [arr];
+                const res = [];
+                for (let i = 0; i < arr.length; i++) {
+                  const current = arr[i];
+                  const remaining = arr.slice(0, i).concat(arr.slice(i + 1));
+                  const perms = getPermutations(remaining);
+                  for (let p of perms) res.push([current, ...p]);
+                }
+                return res;
+              };
 
-            const solve = (currentGrid, blockSeq, stepIndex, currentCleared) => {
-              if (stepIndex === blockSeq.length) {
-                let holes = 0, totalCells = 0;
-                for (let r = 0; r < BOARD_ROWS; r++) {
-                  for (let c = 0; c < BOARD_COLS; c++) {
-                    if (currentGrid[r][c] === 1) totalCells++;
-                    else if (r > 0 && currentGrid[r - 1][c] === 1) holes++;
+              const indices = chosenBlocks.map((_, i) => i);
+              const orderPermutations = getPermutations(indices);
+
+              let bestPlacement = null;
+              let maxScore = -999999;
+
+              const solve = (currentGrid, seqIndices, stepIndex, currentCleared) => {
+                if (stepIndex === seqIndices.length) {
+                  let holes = 0, totalCells = 0;
+                  for (let r = 0; r < BOARD_ROWS; r++) {
+                    for (let c = 0; c < BOARD_COLS; c++) {
+                      if (currentGrid[r][c] === 1) totalCells++;
+                      else if (r > 0 && currentGrid[r - 1][c] === 1) holes++;
+                    }
                   }
+                  const score = (currentCleared * 1000) - (holes * 15) + (totalCells * 2);
+                  if (score > maxScore) {
+                    maxScore = score;
+                    bestPlacement = {
+                      finalGrid: currentGrid,
+                      totalCleared: currentCleared,
+                      placementsCount: seqIndices.length
+                    };
+                  }
+                  return;
                 }
-                const score = (currentCleared * 1000) - (holes * 10) + (totalCells * 2);
-                if (score > maxScore) {
-                  maxScore = score;
-                  bestPlacement = {
-                    finalGrid: currentGrid,
-                    totalCleared: currentCleared,
-                    placementsCount: blockSeq.length
-                  };
-                }
-                return;
-              }
 
-              const block = blockSeq[stepIndex];
-              const orientations = getAllOrientations(block.shape);
-              for (const shape of orientations) {
-                for (let r = 0; r <= BOARD_ROWS - shape.length; r++) {
-                  for (let c = 0; c <= BOARD_COLS - shape[0].length; c++) {
-                    if (canPlace(currentGrid, shape, r, c)) {
-                      const { grid: nextGrid, clearedLines } = applyPlacement(currentGrid, shape, r, c);
-                      solve(nextGrid, blockSeq, stepIndex + 1, currentCleared + clearedLines);
+                const blockIdx = seqIndices[stepIndex];
+                const orientations = blockOrientations[blockIdx];
+
+                for (const shape of orientations) {
+                  const maxR = BOARD_ROWS - shape.length;
+                  const maxC = BOARD_COLS - shape[0].length;
+                  for (let r = 0; r <= maxR; r++) {
+                    for (let c = 0; c <= maxC; c++) {
+                      if (canPlace(currentGrid, shape, r, c)) {
+                        const { grid: nextGrid, clearedLines } = applyPlacement(currentGrid, shape, r, c);
+                        solve(nextGrid, seqIndices, stepIndex + 1, currentCleared + clearedLines);
+                      }
                     }
                   }
                 }
+              };
+
+              for (const seq of orderPermutations) {
+                solve(board, seq, 0, 0);
               }
-            };
 
-            for (const seq of blockOrders) solve(board, seq, 0, 0);
-
-            if (bestPlacement) {
-              setBoard(bestPlacement.finalGrid);
-              setPlacedBlocksCount(prev => prev + bestPlacement.placementsCount);
-              setClearedLinesCount(prev => prev + bestPlacement.totalCleared);
-              setSelectedBlockIds([]);
-              setMessage(`자동 배치 완료! (${bestPlacement.totalCleared} 줄 삭제됨)`);
-            } else {
-              setMessage('선택한 블록을 배치할 수 있는 자리가 없습니다.');
+              if (bestPlacement) {
+                setBoard(bestPlacement.finalGrid);
+                setPlacedBlocksCount(prev => prev + bestPlacement.placementsCount);
+                setClearedLinesCount(prev => prev + bestPlacement.totalCleared);
+                setSelectedBlockIds([]);
+                setMessage(`자동 배치 완료! (${bestPlacement.totalCleared} 줄 삭제됨)`);
+              } else {
+                setMessage('선택한 블록을 배치할 수 있는 자리가 없습니다.');
+              }
+            } catch (err) {
+              console.error(err);
+              setMessage('계산 중 오류가 발생했습니다. 다시 시도해 주세요.');
+            } finally {
+              setIsSolving(false);
             }
-            setIsSolving(false);
-          }, 100);
+          }, 50);
         }, [selectedBlockIds, blocks, board, saveHistory]);
 
         return (
@@ -306,7 +323,6 @@
                   </div>
                 </div>
 
-                {/* 10x16 정사각형 그리드 영역 */}
                 <div className="board-grid-wrapper my-2">
                   <div className="board-grid-container">
                     {board.map((row, rIdx) =>
@@ -351,11 +367,11 @@
                     disabled={isSolving}
                     className="flex items-center justify-center gap-2 py-3 px-4 rounded-2xl font-extrabold text-sm sm:text-base bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white shadow-lg transition-all disabled:opacity-50"
                   >
-                    ▶️ 자동 배치
+                    {isSolving ? '⏳ 계산 중...' : '▶️ 자동 배치'}
                   </button>
                   <button
                     onClick={handleUndo}
-                    disabled={history.length === 0}
+                    disabled={history.length === 0 || isSolving}
                     className="flex items-center justify-center gap-2 py-3 px-4 rounded-2xl font-extrabold text-sm sm:text-base bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white shadow-lg transition-all disabled:opacity-40"
                   >
                     ↩️ 되돌리기
@@ -364,7 +380,7 @@
 
                 {message && (
                   <div className="bg-slate-800/90 border border-slate-700 rounded-xl py-2 px-4 text-xs sm:text-sm text-indigo-300 flex items-center justify-between shadow-sm">
-                    <span>ℹ️ {message}</span>
+                    <span>ℹ️️ {message}</span>
                     <button onClick={() => setMessage('')} className="text-slate-400 hover:text-white ml-2">✕</button>
                   </div>
                 )}
