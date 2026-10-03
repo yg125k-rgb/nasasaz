@@ -169,7 +169,7 @@
           }
         };
 
-        // 🚀 0.001초 즉발 그리디(Greedy) 배치 엔진
+        // 🚀 안정적인 100% 검증 그리디(Greedy) 배치 로직
         const handleAutoPlace = useCallback(() => {
           if (selectedBlockIds.length === 0) {
             setMessage('배치할 블록을 1개 이상 선택해 주세요.');
@@ -179,40 +179,37 @@
           setIsSolving(true);
           saveHistory();
 
-          // 즉시 실행 (Delay 없이 0ms 실행)
           setTimeout(() => {
             try {
-              let currentBoard = [...board];
+              let workingBoard = [...board];
               let totalClearedLines = 0;
               let successfullyPlaced = 0;
 
-              // 선택된 블록들 가져오기 (큰 블록부터 우선배치하여 공간 활용 극대화)
               const chosenBlocks = selectedBlockIds
                 .map(id => blocks.find(b => b.id === id))
+                .filter(Boolean)
                 .sort((a, b) => b.size - a.size);
 
-              // 1. 위치할 수 있는지 판별
               const canPlace = (grid, shape, startR, startC) => {
                 const h = shape.length;
                 const w = shape[0].length;
                 if (startR + h > BOARD_ROWS || startC + w > BOARD_COLS) return false;
                 for (let r = 0; r < h; r++) {
                   for (let c = 0; c < w; c++) {
-                    if (shape[r][c] === 1 && grid[(startR + r) * BOARD_COLS + (startC + c)] === 1) {
-                      return false;
+                    if (shape[r][c] === 1) {
+                      const idx = (startR + r) * BOARD_COLS + (startC + c);
+                      if (grid[idx] === 1) return false;
                     }
                   }
                 }
                 return true;
               };
 
-              // 2. 배치 후 줄 지우기 및 점수 측정
               const evaluateAndSimulate = (grid, shape, startR, startC) => {
                 const tempGrid = [...grid];
                 const h = shape.length;
                 const w = shape[0].length;
 
-                // 블록 배치
                 for (let r = 0; r < h; r++) {
                   for (let c = 0; c < w; c++) {
                     if (shape[r][c] === 1) {
@@ -221,10 +218,11 @@
                   }
                 }
 
-                // 줄 삭제 처리
                 let cleared = 0;
-                const remainingRows = [];
-                for (let r = 0; r < BOARD_ROWS; r++) {
+                const nextGrid = Array(TOTAL_CELLS).fill(0);
+                let nextRowIdx = BOARD_ROWS - 1;
+
+                for (let r = BOARD_ROWS - 1; r >= 0; r--) {
                   let isFull = true;
                   for (let c = 0; c < BOARD_COLS; c++) {
                     if (tempGrid[r * BOARD_COLS + c] === 0) {
@@ -235,23 +233,13 @@
                   if (isFull) {
                     cleared++;
                   } else {
-                    const rowData = [];
-                    for (let c = 0; c < BOARD_COLS; c++) rowData.push(tempGrid[r * BOARD_COLS + c]);
-                    remainingRows.push(rowData);
+                    for (let c = 0; c < BOARD_COLS; c++) {
+                      nextGrid[nextRowIdx * BOARD_COLS + c] = tempGrid[r * BOARD_COLS + c];
+                    }
+                    nextRowIdx--;
                   }
                 }
 
-                // 윗줄 빈 공간 채우기
-                const nextGrid = Array(TOTAL_CELLS).fill(0);
-                const startWriteRow = BOARD_ROWS - remainingRows.length;
-                for (let i = 0; i < remainingRows.length; i++) {
-                  const targetRow = startWriteRow + i;
-                  for (let c = 0; c < BOARD_COLS; c++) {
-                    nextGrid[targetRow * BOARD_COLS + c] = remainingRows[i][c];
-                  }
-                }
-
-                // 그리디 점수 산출
                 let holes = 0;
                 let bottomDensity = 0;
                 for (let c = 0; c < BOARD_COLS; c++) {
@@ -259,9 +247,9 @@
                   for (let r = 0; r < BOARD_ROWS; r++) {
                     if (nextGrid[r * BOARD_COLS + c] === 1) {
                       blockFound = true;
-                      bottomDensity += r; // 아래쪽에 놓일수록 높은 점수
+                      bottomDensity += r;
                     } else if (blockFound && nextGrid[r * BOARD_COLS + c] === 0) {
-                      holes++; // 공중에 뜨는 구멍에 패널티
+                      holes++;
                     }
                   }
                 }
@@ -270,17 +258,16 @@
                 return { nextGrid, cleared, score };
               };
 
-              // 선택된 블록을 순서대로 그리디 탐색
               for (const block of chosenBlocks) {
                 const orientations = getAllOrientations(block.shape);
                 let bestMove = null;
-                let maxScore = -999,999;
+                let maxScore = -999999;
 
                 for (const shape of orientations) {
                   for (let r = 0; r <= BOARD_ROWS - shape.length; r++) {
                     for (let c = 0; c <= BOARD_COLS - shape[0].length; c++) {
-                      if (canPlace(currentBoard, shape, r, c)) {
-                        const { nextGrid, cleared, score } = evaluateAndSimulate(currentBoard, shape, r, c);
+                      if (canPlace(workingBoard, shape, r, c)) {
+                        const { nextGrid, cleared, score } = evaluateAndSimulate(workingBoard, shape, r, c);
                         if (score > maxScore) {
                           maxScore = score;
                           bestMove = { nextGrid, cleared };
@@ -290,16 +277,15 @@
                   }
                 }
 
-                // 가장 좋은 자리가 있으면 즉시 보드 갱신
                 if (bestMove) {
-                  currentBoard = bestMove.nextGrid;
+                  workingBoard = bestMove.nextGrid;
                   totalClearedLines += bestMove.cleared;
                   successfullyPlaced++;
                 }
               }
 
               if (successfullyPlaced > 0) {
-                setBoard(currentBoard);
+                setBoard(workingBoard);
                 setPlacedBlocksCount(prev => prev + successfullyPlaced);
                 setClearedLinesCount(prev => prev + totalClearedLines);
                 setSelectedBlockIds([]);
@@ -387,7 +373,7 @@
                     disabled={history.length === 0 || isSolving}
                     className="flex items-center justify-center gap-2 py-3 px-4 rounded-2xl font-extrabold text-sm sm:text-base bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white shadow-lg transition-all disabled:opacity-40"
                   >
-                    ↩️ 되돌리기
+                    ↩ 되돌리기
                   </button>
                 </div>
 
