@@ -438,7 +438,6 @@
               for (let c = 0; c < BOARD_COLS; c++) {
                 const idx = r * BOARD_COLS + c;
                 
-                // 수동 수정되었거나 아이템 블록으로 지정된 셀은 자동 감지 변경에서 보호
                 if (manuallyModifiedCells.has(idx) || itemBlockCells.has(idx)) continue;
 
                 const centerX = Math.floor(startX + c * cellW + cellW / 2);
@@ -512,7 +511,6 @@
           setMessage('이전 상태로 되돌렸습니다.');
         }, [history]);
 
-        // 셀 클릭 시: 순환 방식 (빈칸(0) -> 일반블록(1) -> 아이템블록(9) -> 빈칸(0))
         const handleCellClick = (index) => {
           if (clickMode === 'OFF') return;
           saveHistory();
@@ -532,10 +530,10 @@
               nextVal = 1;
               next.delete(index);
             } else if (curVal === 1) {
-              nextVal = 9; // 아이템 블록으로 지정
+              nextVal = 9;
               next.add(index);
             } else {
-              nextVal = 0; // 빈칸으로 초기화
+              nextVal = 0;
               next.delete(index);
             }
             return next;
@@ -618,16 +616,14 @@
             });
           });
 
-          // 아이템 블록(값 9) 위치는 자동 배치 결과나 줄 삭제 시에도 보존되도록 병합 처리
           const nextBoardArr = Array.from(grid);
           const nextItemCells = new Set(itemBlockCells);
 
           itemBlockCells.forEach(idx => {
-            // 해당 위치의 줄이 삭제되지 않았다면 아이템 블록 유지
             if (nextBoardArr[idx] !== 0) {
               nextBoardArr[idx] = 9;
             } else {
-              nextItemCells.delete(idx); // 줄 삭제로 인해 파괴된 경우
+              nextItemCells.delete(idx);
             }
           });
 
@@ -764,7 +760,6 @@
           let bestResult = null;
           let maxTotalScore = -Infinity;
           
-          // 기존 보드에서 아이템 블록(값 9)을 일반 블록(값 1)과 동일하게 취급하여 충돌 검사
           const currentGrid = new Int32Array(board.map(v => (v === 9 ? 1 : v)));
 
           for (const blockOrder of permutations) {
@@ -862,7 +857,6 @@
             <video ref={videoRef} className="hidden" />
             <canvas ref={canvasRef} className="hidden" />
 
-            {/* 영역 지정 모달 */}
             {showCropModal && (
               <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex flex-col items-center justify-center p-4">
                 <div className="bg-[#161b22] border border-slate-700 rounded-2xl p-4 max-w-4xl w-full flex flex-col items-center shadow-2xl">
@@ -897,7 +891,6 @@
             )}
 
             <div className="w-full max-w-6xl flex flex-col gap-3">
-              {/* 컨트롤러 바 */}
               <div className="bg-[#161b22] border border-indigo-500/30 rounded-xl p-2.5 flex flex-col gap-3 shadow-lg">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -940,7 +933,6 @@
                   </div>
                 </div>
 
-                {/* 이미지 보정 슬라이더 패널 */}
                 <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-2.5 grid grid-cols-1 sm:grid-cols-4 gap-3 items-center">
                   <div className="flex items-center justify-between sm:justify-start gap-2">
                     <span className="text-xs font-bold text-slate-300">흑백 모드</span>
@@ -1003,7 +995,6 @@
               </div>
 
               <div className="w-full grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
-                {/* 왼쪽 맵 판넬 */}
                 <div className="lg:col-span-5 bg-[#161b22] border border-slate-800 rounded-2xl p-3 sm:p-4 shadow-xl flex flex-col items-center w-full">
                   <div className="w-full flex justify-between items-center mb-2 pb-2 border-b border-slate-800">
                     <span className="font-bold text-base text-slate-200">맵 (10 x 16)</span>
@@ -1046,7 +1037,6 @@
                     </div>
                   </div>
 
-                  {/* 인식 디버그 프리뷰 */}
                   <div className="w-full mt-2 flex flex-col items-center">
                     <button
                       onClick={() => setShowDebugPreview(!showDebugPreview)}
@@ -1103,9 +1093,7 @@
                   </div>
                 </div>
 
-                {/* 오른쪽 컨트롤 및 직접 선택 블록 목록 */}
                 <div className="lg:col-span-7 flex flex-col gap-3 w-full">
-                  {/* 교체 기회 관리 바 */}
                   <div className="bg-[#161b22] border border-amber-500/30 rounded-xl p-2.5 sm:p-3 flex items-center justify-between shadow-lg">
                     <div className="flex items-center gap-2">
                       <span className="text-lg">🎲</span>
@@ -1183,7 +1171,6 @@
                     </div>
                   )}
 
-                  {/* 직접 선택하는 보유 블록 판넬 */}
                   <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-3 shadow-xl flex flex-col">
                     <div className="flex justify-between items-center mb-1.5">
                       <span className="font-bold text-sm text-slate-100">
@@ -1270,7 +1257,8 @@
         );
       }
 
-      ReactDOM.createRoot(getElementById('root')).render(<App />);
+      // 🛠 수정 완료: document.getElementById 추가됨
+      ReactDOM.createRoot(document.getElementById('root')).render(<App />);
     </script>
   </body>
 </html>
