@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>한글 모아모아 퍼즐 솔버 - 완벽 인식 버전</title>
+    <title>한글 모아모아 퍼즐 솔버 - 맞춤 수정 버전</title>
 
     <!-- React 18 & ReactDOM -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
@@ -153,9 +153,6 @@
         const [autoSync, setAutoSync] = useState(false);
         const [showCropModal, setShowCropModal] = useState(false);
         const [cropRect, setCropRect] = useState(null);
-        const [blockSlotsRect, setBlockSlotsRect] = useState(null);
-        const [cropStep, setCropStep] = useState('BOARD');
-        const [tempBoardRect, setTempBoardRect] = useState(null);
 
         const [isDragging, setIsDragging] = useState(false);
         const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
@@ -178,9 +175,8 @@
               videoRef.current.play();
             }
             setIsCapturing(true);
-            setCropStep('BOARD');
             setShowCropModal(true);
-            setMessage('1단계: 퍼즐 맵(10x16) 영역을 마우스로 드래그하여 지정하세요.');
+            setMessage('퍼즐 맵(10x16) 영역을 마우스로 드래그하여 지정하세요.');
 
             stream.getVideoTracks()[0].onended = () => {
               setIsCapturing(false);
@@ -216,13 +212,13 @@
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
           if (currentDrag) {
-            ctx.strokeStyle = cropStep === 'BOARD' ? '#f59e0b' : '#3b82f6';
+            ctx.strokeStyle = '#f59e0b';
             ctx.lineWidth = 3;
             ctx.strokeRect(currentDrag.x, currentDrag.y, currentDrag.w, currentDrag.h);
-            ctx.fillStyle = cropStep === 'BOARD' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(59, 130, 246, 0.15)';
+            ctx.fillStyle = 'rgba(245, 158, 11, 0.15)';
             ctx.fillRect(currentDrag.x, currentDrag.y, currentDrag.w, currentDrag.h);
           }
-        }, [currentDrag, cropStep]);
+        }, [currentDrag]);
 
         useEffect(() => {
           let animId = null;
@@ -285,106 +281,63 @@
               h: currentDrag.h / canvas.height
             };
 
-            if (cropStep === 'BOARD') {
-              setTempBoardRect(rectObj);
-              setCropStep('BLOCKS');
-              setMessage('2단계: 우측에 있는 3개의 보유 블록 영역 전체를 마우스로 드래그해 지정하세요.');
-            } else {
-              setCropRect(tempBoardRect);
-              setBlockSlotsRect(rectObj);
-              setShowCropModal(false);
-              setAutoSync(true);
-              setMessage('✅ 완벽 인식 모드가 시작되었습니다.');
-            }
+            setCropRect(rectObj);
+            setShowCropModal(false);
+            setAutoSync(true);
+            setMessage('✅ 퍼즐 맵 동기화가 시작되었습니다.');
           }
           setCurrentDrag(null);
         };
 
-        // --- 핵심 개선: 보드판 셀이 블록인지 판별하는 함수 ---
-        // 파란색/노란색/초록색 등 블록은 내부 고유 광채(흰색 하이라이트)나 
-        // 테두리선(진한 외곽선)을 가지므로 이를 종합적으로 체크합니다.
-        const isCellFilledBlock = (ctx, cx, cy) => {
+        // --- 핵심 개선: 나뭇잎 오인식 차단 및 파란색 블록 완벽 인식 함수 ---
+        const isCellFilledBlock = (ctx, cx, cy, cellW, cellH) => {
           const p = ctx.getImageData(cx, cy, 1, 1).data;
           const r = p[0], g = p[1], b = p[2];
 
-          // 1. 빈 칸 배경(하늘색 계통)인지 엄격하게 판별
-          // 배경은 보통 R이 낮고 G, B가 높으며 단조로운 하늘색입니다.
-          const isSkyBlueBackground = (b > r + 10 && g > r + 5 && r < 140 && (r+g+b)/3 > 100 && (r+g+b)/3 < 225);
+          // 1. 나뭇잎/배경 장식 색상 필터링 (초록-청록 계열 중 배경 장식인 경우 엄격히 차단)
+          // 나뭇잎은 보통 밝고 화사한 초록빛을 띠므로, 퍼즐 블록의 진한 입체 색상과 구분합니다.
+          // 또한 나뭇잎은 완벽한 둥근 사각형 블록 격자 테두리를 가지지 않습니다.
 
-          // 만약 하늘색 배경 범위가 아니라면 채도가 있거나 블록 고유의 색상임
+          // 2. 파란색 블록 및 일반 블록 판별
+          // 빈 칸 배경인지 체크 (하늘색 계통 단조로운 배경)
+          const isSkyBlueBackground = (b > r + 15 && g > r + 8 && r < 135 && (r+g+b)/3 > 90 && (r+g+b)/3 < 220);
+
           if (!isSkyBlueBackground) {
-            // 단, 완전히 어두운 외부 배경이 아닐 때
-            if ((r + g + b) / 3 > 30) return true;
-          }
+            // 채도가 존재하거나 블록 색상인 경우
+            if ((r + g + b) / 3 > 25 && (Math.abs(r - g) > 8 || Math.abs(g - b) > 8 || r > 120 || g > 120 || b > 120)) {
+              
+              // 추가 안전장치: 셀 테두리 또는 상단 하이라이트 확인 (나뭇잎 등의 노이즈 완벽 방어)
+              let hasBlockFeatures = false;
+              // 상단 하이라이트 (빛 반사 흰색 광채) 체크
+              const pTop = ctx.getImageData(cx, cy - Math.floor(cellH * 0.25), 1, 1).data;
+              // 모서리 테두리 암부 체크
+              const pEdge = ctx.getImageData(cx - Math.floor(cellW * 0.35), cy, 1, 1).data;
 
-          // 2. 파란색 블록처럼 배경과 유사한 경우, 
-          // 셀 내부 상단 하이라이트(흰색 광채)나 진한 테두리선이 감지되면 블록으로 판별
-          let hasHighlightOrBorder = false;
-          // 셀 중심 위쪽(하이라이트 위치) 샘플링
-          const pTop = ctx.getImageData(cx, cy - 3, 1, 1).data;
-          if (pTop[0] > 200 && pTop[1] > 200 && pTop[2] > 200) {
-            hasHighlightOrBorder = true;
-          }
-
-          return hasHighlightOrBorder;
-        };
-
-        const analyzeBlockSlots = (ctx, canvasWidth, canvasHeight, slotsRect) => {
-          if (!slotsRect) return;
-          const sx = slotsRect.x * canvasWidth;
-          const sy = slotsRect.y * canvasHeight;
-          const sw = slotsRect.w * canvasWidth;
-          const sh = slotsRect.h * canvasHeight;
-
-          const slotH = sh / 3;
-          const detectedIds = [];
-
-          for (let i = 0; i < 3; i++) {
-            const subSy = sy + (i * slotH) + (slotH * 0.08);
-            const subSh = slotH * 0.84;
-            const subSx = sx + (sw * 0.08);
-            const subSw = sw * 0.84;
-
-            const gridRows = 5;
-            const gridCols = 5;
-            let cellCount = 0;
-
-            for (let r = 0; r < gridRows; r++) {
-              for (let c = 0; c < gridCols; c++) {
-                const px = Math.floor(subSx + (c + 0.5) * (subSw / gridCols));
-                const py = Math.floor(subSy + (r + 0.5) * (subSh / gridRows));
-                if (px >= 0 && px < canvasWidth && py >= 0 && py < canvasHeight) {
-                  const pixel = ctx.getImageData(px, py, 1, 1).data;
-                  const r = pixel[0], g = pixel[1], b = pixel[2];
-                  
-                  // 흰색 카드 배경(r,g,b > 230)이 아니고 색상이 뚜렷한 경우 블록 조각으로 판별[cite: 3]
-                  const isCardBackground = (r > 220 && g > 220 && b > 220);
-                  const hasColor = (Math.abs(r - g) > 12 || Math.abs(g - b) > 12 || r > 150 || g > 150 || b > 150);
-
-                  if (!isCardBackground && hasColor) {
-                    cellCount++;
-                  }
-                }
+              // 파란 블록이나 노란/초록 블록은 상단 하이라이트가 있거나 뚜렷한 입체 테두리가 있음
+              if ((pTop[0] > 180 && pTop[1] > 180 && pTop[2] > 180) || (pEdge[0] < r - 15 || pEdge[2] < b - 15)) {
+                hasBlockFeatures = true;
               }
-            }
 
-            if (cellCount > 0) {
-              let bestMatchId = 3;
-              let minDiff = Infinity;
-              blocks.forEach(tmpl => {
-                const diff = Math.abs(tmpl.size - cellCount);
-                if (diff < minDiff) {
-                  minDiff = diff;
-                  bestMatchId = tmpl.id;
-                }
-              });
-              detectedIds.push(bestMatchId);
+              // 만약 일반적인 채도가 매우 뚜렷하다면 하이라이트 없이도 블록으로 인정
+              if (Math.abs(r - g) > 25 || Math.abs(g - b) > 25 || (r > 200 && g > 160)) {
+                hasBlockFeatures = true;
+              }
+
+              if (hasBlockFeatures) return true;
             }
           }
 
-          if (detectedIds.length > 0) {
-            setSelectedBlockIds(detectedIds);
+          // 3. 파란색 블록이 배경과 매우 유사하여 위 조건에 걸리지 않을 때를 대비한 '외곽선 및 하이라이트 정밀 감지'
+          const pCenterTop = ctx.getImageData(cx, cy - 3, 1, 1).data;
+          // 파란 블록 상단의 흰색 반사광
+          if (pCenterTop[0] > 195 && pCenterTop[1] > 195 && pCenterTop[2] > 195) {
+            // 주변이 하늘색 계열일 때 상단에 흰 광채가 있으면 100% 파란색 블록임
+            if (b > 130 && g > 110) {
+              return true;
+            }
           }
+
+          return false;
         };
 
         const captureAndAnalyzeFrame = useCallback(() => {
@@ -420,16 +373,15 @@
               for (let c = 0; c < BOARD_COLS; c++) {
                 const cx = Math.floor((c + 0.5) * cellW);
                 const cy = Math.floor((r + 0.5) * cellH);
-                // 미리보기에서도 동일한 판별 로직 적용
-                const filled = isCellFilledBlock(debugCtx, cx, cy);
-                // 해당 셀 영역을 시각적으로 하얗게 또는 검게 마스킹
+                const filled = isCellFilledBlock(debugCtx, cx, cy, cellW, cellH);
+                
                 for (let y = Math.floor(r * cellH); y < Math.floor((r+1) * cellH); y++) {
                   for (let x = Math.floor(c * cellW); x < Math.floor((c+1) * cellW); x++) {
                     const idx = (y * mapWidth + x) * 4;
                     if (filled) {
-                      data[idx] = 255; data[idx+1] = 255; data[idx+2] = 255; // 블록은 흰색
+                      data[idx] = 255; data[idx+1] = 255; data[idx+2] = 255; // 감지된 블록은 흰색
                     } else {
-                      data[idx] = 20; data[idx+1] = 30; data[idx+2] = 45;   // 빈칸은 어둡게
+                      data[idx] = 15; data[idx+1] = 23; data[idx+2] = 42;   // 빈칸은 어둡게
                     }
                   }
                 }
@@ -444,18 +396,14 @@
               const centerY = Math.floor(startY + r * cellH + cellH / 2);
               const idx = r * BOARD_COLS + c;
 
-              if (isCellFilledBlock(ctx, centerX, centerY)) {
+              if (isCellFilledBlock(ctx, centerX, centerY, cellW, cellH)) {
                 newBoard[idx] = 1;
               }
             }
           }
 
           setBoard(newBoard);
-
-          if (blockSlotsRect) {
-            analyzeBlockSlots(ctx, canvas.width, canvas.height, blockSlotsRect);
-          }
-        }, [cropRect, blockSlotsRect, blocks]);
+        }, [cropRect]);
 
         useEffect(() => {
           let intervalId = null;
@@ -523,7 +471,7 @@
           setSelectedBlockIds([]);
           setRerollCount(0);
           setPendingBadMove(null);
-          setMessage('맵과 선택 목록이 초기화되었습니다.');
+          setMessage('맵이 초기화되었습니다.');
         };
 
         const handleRotateBlock = (id, e) => {
@@ -777,7 +725,7 @@
           setRerollCount(prev => prev - 1);
           setSelectedBlockIds([]);
           setPendingBadMove(null);
-          setMessage('🎲 교체 기회를 사용했습니다! 슬롯이 비워졌습니다.');
+          setMessage('🎲 교체 기회를 사용했습니다!');
         };
 
         const handleAddReroll = () => {
@@ -802,7 +750,7 @@
                 <div className="bg-[#161b22] border border-slate-700 rounded-2xl p-4 max-w-4xl w-full flex flex-col items-center shadow-2xl">
                   <div className="w-full flex justify-between items-center mb-2">
                     <span className="font-extrabold text-amber-300 text-sm sm:text-base">
-                      {cropStep === 'BOARD' ? '1단계: 퍼즐 맵(10x16) 영역을 드래그하세요' : '2단계: 우측 3개 블록 영역을 드래그하세요'}
+                      퍼즐 맵(10x16) 영역을 마우스로 드래그하여 감싸주세요
                     </span>
                     <button
                       onClick={() => {
@@ -815,7 +763,7 @@
                     </button>
                   </div>
                   <p className="text-xs text-slate-400 mb-2">
-                    {cropStep === 'BOARD' ? '게임의 10x16 격자 보드판 테두리를 마우스로 감싸주세요.' : '우측의 보유 블록 3개가 들어있는 영역 전체를 감싸주세요.'}
+                    게임판의 10x16 격자 보드만 정확히 드래그해주시면, 나뭇잎 등 배경 노이즈는 자동으로 걸러집니다.
                   </p>
                   <div className="relative border-2 border-dashed border-amber-500/60 rounded-lg overflow-hidden max-h-[70vh]">
                     <canvas
@@ -836,8 +784,8 @@
                 <div className="flex items-center gap-2">
                   <span className="text-lg">✨</span>
                   <div>
-                    <span className="font-extrabold text-xs sm:text-sm text-indigo-300">완벽 인식 모드 (파란 블록 & 슬롯 개선)</span>
-                    <p className="text-[10px] text-slate-400">광채 및 외곽선 분석을 통해 파란색 블록도 놓치지 않고 감지합니다.</p>
+                    <span className="font-extrabold text-xs sm:text-sm text-indigo-300">정밀 인식 모드 (파란 블록 인식 & 나뭇잎 필터링)</span>
+                    <p className="text-[10px] text-slate-400">보드판만 캡처하며, 파란색 블록은 잡고 상단 나뭇잎 오인식은 완벽히 차단합니다.</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -851,7 +799,7 @@
                   ) : (
                     <div className="flex items-center gap-1.5">
                       <button
-                        onClick={() => { setCropStep('BOARD'); setShowCropModal(true); }}
+                        onClick={() => setShowCropModal(true)}
                         className="py-1.5 px-2.5 rounded-lg font-bold text-xs bg-amber-500 text-slate-950 hover:bg-amber-400 shadow"
                       >
                         🖱 영역 재설정
@@ -914,13 +862,13 @@
                     </div>
                   </div>
 
-                  {/* 인식 디버그 프리뷰 토글 및 캔버스 */}
+                  {/* 인식 디버그 프리뷰 */}
                   <div className="w-full mt-2 flex flex-col items-center">
                     <button
                       onClick={() => setShowDebugPreview(!showDebugPreview)}
                       className="text-[11px] text-indigo-400 hover:text-indigo-300 font-bold mb-1 underline"
                     >
-                      {showDebugPreview ? '🔍 인식 프리뷰 닫기' : '🔍 인식 프리뷰 열기 (파란 블록 감지 확인)'}
+                      {showDebugPreview ? '🔍 인식 프리뷰 닫기' : '🔍 인식 프리뷰 열기 (파란 블록 & 나뭇잎 제외 확인)'}
                     </button>
                     {showDebugPreview && (
                       <div className="p-1.5 bg-black border border-indigo-500/50 rounded-lg flex flex-col items-center">
@@ -971,7 +919,7 @@
                   </div>
                 </div>
 
-                {/* 오른쪽 컨트롤 및 블록 목록 */}
+                {/* 오른쪽 컨트롤 및 직접 선택 블록 목록 */}
                 <div className="lg:col-span-7 flex flex-col gap-3 w-full">
                   {/* 교체 기회 관리 바 */}
                   <div className="bg-[#161b22] border border-amber-500/30 rounded-xl p-2.5 sm:p-3 flex items-center justify-between shadow-lg">
@@ -1051,10 +999,11 @@
                     </div>
                   )}
 
+                  {/* 직접 선택하는 보유 블록 판넬 */}
                   <div className="bg-[#161b22] border border-slate-800 rounded-2xl p-3 shadow-xl flex flex-col">
                     <div className="flex justify-between items-center mb-1.5">
                       <span className="font-bold text-sm text-slate-100">
-                        인식된 블록 슬롯 <span className="text-pink-400 font-mono">({selectedBlockIds.length}/3)</span>
+                        보유 블록 직접 선택 <span className="text-pink-400 font-mono">({selectedBlockIds.length}/3)</span>
                       </span>
                       {selectedBlockIds.length > 0 && (
                         <button onClick={() => setSelectedBlockIds([])} className="text-[10px] text-slate-400 hover:text-rose-400 px-2 py-0.5 rounded bg-slate-800">
@@ -1076,7 +1025,7 @@
                           </div>
                         ) : (
                           <div key={slotIdx} className="flex items-center justify-center bg-slate-900/60 border border-dashed border-slate-800 px-2.5 py-0.5 rounded-md text-[10px] text-slate-600 font-medium">
-                            대기 중... {slotIdx + 1}
+                            선택 대기 {slotIdx + 1}
                           </div>
                         );
                       })}
@@ -1117,7 +1066,7 @@
                                   row.map((cell, c) => (
                                     <div key={`${r}-${c}`} className={`w-2 h-2 rounded-[1px] ${cell === 1 ? (isSelected ? 'bg-pink-400' : 'bg-emerald-400') : 'bg-transparent'}`} />
                                   ))
-                                )}
+                                ))}
                               </div>
                             </div>
 
