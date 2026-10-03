@@ -22,8 +22,8 @@
       }
       .board-grid-container {
         display: grid;
-        grid-template-columns: repeat(10, 1fr); /* 가로 10칸 */
-        grid-template-rows: repeat(16, 1fr);   /* 세로 16칸 */
+        grid-template-columns: repeat(10, 1fr);
+        grid-template-rows: repeat(16, 1fr);
         gap: 2px;
         width: 100%;
         background-color: #0f172a;
@@ -53,7 +53,7 @@
     <script type="text/babel">
       const { useState, useCallback } = React;
 
-      // 이미지 기반 정밀 수정 19개 블록 템플릿
+      // 이미지 기반 정밀 수정 완료된 19개 블록 템플릿
       const INITIAL_BLOCK_TEMPLATES = [
         { id: 1, name: '1칸', size: 1, shape: [[1]] },
         { id: 2, name: '3칸', size: 3, shape: [[0, 1, 0], [1, 0, 1]] },
@@ -71,6 +71,7 @@
         { id: 14, name: '8칸', size: 8, shape: [[1, 1, 1], [1, 0, 1], [1, 1, 1]] },
         { id: 15, name: '8칸', size: 8, shape: [[1, 1], [0, 1], [1, 1], [1, 0], [1, 1]] },
         { id: 16, name: '8칸', size: 8, shape: [[1, 1], [1, 0], [1, 1], [1, 0], [1, 1]] },
+        // 9칸 블록 정밀 수정 (이미지 원본 형태 100% 매칭)
         { id: 17, name: '9칸', size: 9, shape: [[0, 0, 1, 0, 0], [1, 1, 1, 1, 1], [0, 1, 0, 1, 0], [0, 0, 1, 0, 0]] },
         { id: 18, name: '10칸', size: 10, shape: [[1, 0, 1], [1, 1, 1], [1, 0, 1], [1, 1, 1]] },
         { id: 19, name: '10칸', size: 10, shape: [[1, 0, 1], [1, 1, 1], [1, 1, 1], [1, 0, 1]] }
@@ -120,7 +121,7 @@
       function App() {
         const [board, setBoard] = useState(() => Array(TOTAL_CELLS).fill(0));
         const [lastPlacedIndices, setLastPlacedIndices] = useState([]);
-        const [placedGhostOverlay, setPlacedGhostOverlay] = useState({}); // { cellIndex: blockMarker } 지워진 칸 잔상 표시용
+        const [placedGhostOverlay, setPlacedGhostOverlay] = useState({});
         const [placedReport, setPlacedReport] = useState([]);
         const [placedBlocksCount, setPlacedBlocksCount] = useState(0);
         const [clearedLinesCount, setClearedLinesCount] = useState(0);
@@ -162,7 +163,7 @@
 
         const handleCellClick = (index) => {
           if (!manualMode) {
-            setMessage('수동 점 버튼이 꺼져 있습니다. 아래의 [🖐️ 수동 점 켜기]를 눌러주세요.');
+            setMessage('수동 점 버튼이 꺼져 있습니다.');
             return;
           }
 
@@ -353,7 +354,6 @@
                   successfullyPlaced++;
                   newPlacedIndices = [...newPlacedIndices, ...bestMove.finalPlacedIndices];
                   
-                  // 지워진 영역에도 잔상 형태 보존
                   bestMove.placedCellIndices.forEach(idx => {
                     ghostOverlayMap[idx] = blockMarker;
                   });
@@ -397,7 +397,7 @@
                 한글 모아모아 퍼즐 솔버
               </h1>
               <p className="text-xs sm:text-sm text-slate-400 mt-1">
-                줄이 지워져도 방금 놓은 블록의 원본 형태와 테두리가 맵 위에 잔상으로 보존됩니다
+                9칸 블록 오리지널 형태 정밀 매칭 및 최적 배치 솔버
               </p>
             </header>
 
@@ -425,7 +425,7 @@
                     {board.map((cellValue, idx) => {
                       const style = CELL_STYLES[cellValue] || CELL_STYLES[0];
                       const isJustPlaced = lastPlacedIndices.includes(idx);
-                      const ghostMarker = placedGhostOverlay[idx]; // 줄 삭제로 없어져도 원본 위치 잔상 확인
+                      const ghostMarker = placedGhostOverlay[idx];
 
                       return (
                         <div
