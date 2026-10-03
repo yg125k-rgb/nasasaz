@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>한글 모아모아 퍼즐 솔버 - 흑백 이진화 인식</title>
+    <title>한글 모아모아 퍼즐 솔버 - 스마트 색상 필터 인식</title>
 
     <!-- React 18 & ReactDOM -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
@@ -99,7 +99,7 @@
         return result;
       };
 
-      const flipMatrix = (matrix) => matrix.ap ? matrix.map(row => [...row].reverse()) : matrix;
+      const flipMatrix = (matrix) => matrix.map(row => [...row].reverse());
 
       const getAllOrientations = (initialShape) => {
         const orientations = [];
@@ -145,7 +145,7 @@
         const [history, setHistory] = useState([]);
         const [message, setMessage] = useState('');
         
-        // 디버그/흑백 미리보기 상태
+        // 디버그/색상 필터 미리보기 상태
         const [showDebugPreview, setShowDebugPreview] = useState(false);
         const debugCanvasRef = useRef(null);
 
@@ -295,18 +295,20 @@
               setBlockSlotsRect(rectObj);
               setShowCropModal(false);
               setAutoSync(true);
-              setMessage('✅ 흑백 이진화 인식 모드가 시작되었습니다.');
+              setMessage('✅ 스마트 색상 필터 인식 모드가 시작되었습니다.');
             }
           }
           setCurrentDrag(null);
         };
 
-        // 흑백 이진화 기반 블록 판별 함수 (밝기 차이 활용)
-        const isGrayscaleBlockPixel = (grayValue) => {
-          // 배경(하늘색)은 일반적으로 중간~밝은 회색조로 나타나며, 실제 채워진 블록은 명암 대비가 뚜렷합니다.
-          // 배경과 빈칸이 어둡거나 밝은 정도를 기준으로 판별 (게임 배경에 맞춰 조절 가능)
-          // 여기서는 배경보다 어둡거나 확실히 밝은 픽셀을 블록으로 인정
-          return grayValue < 140 || grayValue > 210;
+        // --- 핵심: 배경 하늘색(파란빛 계통) 판별 함수 ---
+        // 게임판의 빈 칸 배경색(특정 파란색/하늘색 영역)인지 판단합니다.
+        const isBackgroundSkyBlue = (r, g, b) => {
+          // 배경은 보통 R이 낮고 G, B가 높으며 밝은 하늘색 계통입니다.
+          // 이 범주에 들면 빈 칸(0)으로 처리합니다.
+          const isBlueDominant = b > r + 15 && g > r + 10;
+          const isLightOrMedium = (r + g + b) / 3 > 90 && (r + g + b) / 3 < 235;
+          return isBlueDominant && isLightOrMedium;
         };
 
         const analyzeBlockSlots = (ctx, canvasWidth, canvasHeight, slotsRect) => {
@@ -335,12 +337,8 @@
                 const py = Math.floor(subSy + (r + 0.5) * (subSh / gridRows));
                 if (px >= 0 && px < canvasWidth && py >= 0 && py < canvasHeight) {
                   const pixel = ctx.getImageData(px, py, 1, 1).data;
-                  // 흑백 변환 (Luminance 공식)
-                  const gray = 0.299 * pixel[0] + 0.587 * pixel[1] + 0.114 * pixel[2];
-                  // 블록 테두리나 내부 색상 판별
-                  if (pixel[0] > 150 && pixel[1] > 150 && pixel[2] > 100) { // 노란색/밝은 블록 계열
-                    cellCount++;
-                  } else if (gray < 160 && (Math.abs(pixel[0] - pixel[1]) > 15 || Math.abs(pixel[1] - pixel[2]) > 15)) {
+                  // 배경색이 아니면 블록 픽셀로 카운트
+                  if (!isBackgroundSkyBlue(pixel[0], pixel[1], pixel[2]) && (pixel[0] > 50 || pixel[1] > 50 || pixel[2] > 50)) {
                     cellCount++;
                   }
                 }
@@ -385,7 +383,7 @@
           const cellH = mapHeight / BOARD_ROWS;
           const newBoard = Array(TOTAL_CELLS).fill(0);
 
-          // 디버그용 흑백 캔버스 그리기
+          // 디버그용 색상 필터 캔버스 그리기 (배경은 검게, 블록은 하얗게 표시)
           let debugCtx = null;
           if (debugCanvasRef.current) {
             const dbgCanvas = debugCanvasRef.current;
@@ -394,15 +392,17 @@
             debugCtx = dbgCanvas.getContext('2d');
             debugCtx.drawImage(video, startX, startY, mapWidth, mapHeight, 0, 0, mapWidth, mapHeight);
             
-            // 흑백 및 이진화 적용
             const imgData = debugCtx.getImageData(0, 0, mapWidth, mapHeight);
             const data = imgData.data;
             for (let i = 0; i < data.length; i += 4) {
-              const avg = 0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2];
-              const isBlock = isGrayscaleBlockPixel(avg) ? 255 : 0;
-              data[i] = isBlock;     // R
-              data[i+1] = isBlock; // G
-              data[i+2] = isBlock; // B
+              const r = data[i], g = data[i+1], b = data[i+2];
+              if (isBackgroundSkyBlue(r, g, b)) {
+                // 배경은 검은색 처리
+                data[i] = 0; data[i+1] = 0; data[i+2] = 0;
+              } else {
+                // 블록이 있는 부분은 하얀색 처리
+                data[i] = 255; data[i+1] = 255; data[i+2] = 255;
+              }
             }
             debugCtx.putImageData(imgData, 0, 0);
           }
@@ -412,17 +412,10 @@
               const centerX = Math.floor(startX + c * cellW + cellW / 2);
               const centerY = Math.floor(startY + r * cellH + cellH / 2);
               const pixel = ctx.getImageData(centerX, centerY, 1, 1).data;
-
-              // 흑백 변환값 계산
-              const gray = 0.299 * pixel[0] + 0.587 * pixel[1] + 0.114 * pixel[2];
               const idx = r * BOARD_COLS + c;
 
-              // 빈 칸(하늘색 배경)과 블록 색상의 명암/색상 차이 판별
-              // 배경 하늘색은 특정 회색조 영역에 밀집하므로 이를 제외
-              const isBackgroundSkyBlue = pixel[0] < 120 && pixel[1] > 130 && pixel[2] > 150;
-              const hasBlock = !isBackgroundSkyBlue && (gray < 135 || gray > 215 || Math.abs(pixel[0] - pixel[2]) > 25);
-
-              if (hasBlock) {
+              // 배경 하늘색이 아니면 블록(1)으로 판별
+              if (!isBackgroundSkyBlue(pixel[0], pixel[1], pixel[2])) {
                 newBoard[idx] = 1;
               }
             }
@@ -812,10 +805,10 @@
               {/* 컨트롤러 바 */}
               <div className="bg-[#161b22] border border-indigo-500/30 rounded-xl p-2.5 flex items-center justify-between shadow-lg">
                 <div className="flex items-center gap-2">
-                  <span className="text-lg">📷</span>
+                  <span className="text-lg">🎨</span>
                   <div>
-                    <span className="font-extrabold text-xs sm:text-sm text-indigo-300">화면 자동 캡처 및 흑백 이진화 인식</span>
-                    <p className="text-[10px] text-slate-400">명암 대비를 극대화하여 블록을 정확히 스캔합니다.</p>
+                    <span className="font-extrabold text-xs sm:text-sm text-indigo-300">스마트 색상 필터 인식 모드</span>
+                    <p className="text-[10px] text-slate-400">파란 배경색만 골라서 지우고 블록만 정확히 감지합니다.</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -892,17 +885,17 @@
                     </div>
                   </div>
 
-                  {/* 흑백 디버그 프리뷰 토글 및 캔버스 */}
+                  {/* 색상 필터 디버그 프리뷰 토글 및 캔버스 */}
                   <div className="w-full mt-2 flex flex-col items-center">
                     <button
                       onClick={() => setShowDebugPreview(!showDebugPreview)}
                       className="text-[11px] text-indigo-400 hover:text-indigo-300 font-bold mb-1 underline"
                     >
-                      {showDebugPreview ? '🔍 흑백 인식 미리보기 닫기' : '🔍 흑백 인식 미리보기 열기 (인식 정확도 확인)'}
+                      {showDebugPreview ? '🔍 색상 필터 미리보기 닫기' : '🔍 색상 필터 미리보기 열기 (배경 제거 확인)'}
                     </button>
                     {showDebugPreview && (
                       <div className="p-1.5 bg-black border border-indigo-500/50 rounded-lg flex flex-col items-center">
-                        <span className="text-[9px] text-slate-400 mb-1">흰색으로 보이는 부분이 블록으로 인식됩니다</span>
+                        <span className="text-[9px] text-slate-400 mb-1">흰색으로 변환된 부분만 블록으로 인식됩니다</span>
                         <canvas ref={debugCanvasRef} className="max-w-[200px] h-auto rounded border border-slate-700" />
                       </div>
                     )}
