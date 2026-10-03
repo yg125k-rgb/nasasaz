@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>한글 모아모아 퍼즐 솔버 - 수동 수정 보호 버전</title>
+    <title>한글 모아모아 퍼즐 솔버 - 흰색 및 얼룩무늬 전용 인식 버전</title>
 
     <!-- React 18 & ReactDOM -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
@@ -146,7 +146,7 @@
         const [history, setHistory] = useState([]);
         const [message, setMessage] = useState('');
 
-        const [isGrayscale, setIsGrayscale] = useState(false);
+        const [isGrayscale, setIsGrayscale] = useState(true);
         const [brightness, setBrightness] = useState(0);
         const [contrast, setContrast] = useState(0);
         const [gamma, setGamma] = useState(1.0);
@@ -326,34 +326,36 @@
           return imageData;
         };
 
+        // --- 흰색 블록 및 얼룩무늬(명암) 블록 전용 판별 함수 ---
         const isCellFilledBlock = (ctx, cx, cy, cellW, cellH) => {
-          const p = ctx.getImageData(cx, cy, 1, 1).data;
-          const r = p[0], g = p[1], b = p[2];
+          const halfW = Math.max(1, Math.floor(cellW * 0.3));
+          const halfH = Math.max(1, Math.floor(cellH * 0.3));
+          const x = Math.floor(cx - halfW);
+          const y = Math.floor(cy - halfH);
+          const w = Math.max(2, halfW * 2);
+          const h = Math.max(2, halfH * 2);
 
-          if (isGrayscale) {
-            const lum = (r + g + b) / 3;
-            const pTop = ctx.getImageData(cx, cy - Math.floor(cellH * 0.25), 1, 1).data;
-            const lumTop = (pTop[0] + pTop[1] + pTop[2]) / 3;
-            if (lum > 35 && (Math.abs(lum - lumTop) > 15 || lum > 110)) {
-              return true;
-            }
-            return false;
+          const imgData = ctx.getImageData(x, y, w, h);
+          const data = imgData.data;
+
+          let sum = 0;
+          let minLum = 255;
+          let maxLum = 0;
+          let count = data.length / 4;
+
+          for (let i = 0; i < data.length; i += 4) {
+            const lum = (data[i] + data[i+1] + data[i+2]) / 3;
+            sum += lum;
+            if (lum < minLum) minLum = lum;
+            if (lum > maxLum) maxLum = lum;
           }
+          const avgLum = sum / count;
+          const lumRange = maxLum - minLum;
 
-          const isBackground = (b > r + 10 && g > r + 5 && r < 140 && (r + g + b) / 3 > 90 && (r + g + b) / 3 < 220);
-          if (isBackground) return false;
-
-          const isOrangeYellowBlock = (r > 150 && g > 90 && r > b + 30);
-          const isBlueBlock = (b > 110 && g > 90 && b >= r - 10 && !isBackground && ((b - r) > 20 || (g - r) > 15));
-          const isGreenBlock = (g > r + 20 && g > b + 15 && g > 100);
-          const isPinkMagentaBlock = (r > 150 && b > 120 && g < 140 && Math.abs(r - b) < 60);
-
-          if (isOrangeYellowBlock || isBlueBlock || isGreenBlock || isPinkMagentaBlock) {
-            return true;
-          }
-
-          const pTop = ctx.getImageData(cx, cy - Math.floor(cellH * 0.2), 1, 1).data;
-          if (pTop[0] > 190 && pTop[1] > 190 && pTop[2] > 190 && (r + g + b) / 3 > 80) {
+          // 1. 흰색 블록: 전체 평균 밝기가 충분히 밝음 (avgLum이 높음)
+          // 2. 얼룩무늬 블록: 검정과 흰색이 섞여 내부 명암 낙차(lumRange)가 큼
+          // 배경은 어둡고 균일하므로 이 조건에서 철저히 제외됨
+          if (avgLum > 75 || (avgLum > 35 && lumRange > 25)) {
             return true;
           }
 
@@ -422,7 +424,6 @@
               for (let c = 0; c < BOARD_COLS; c++) {
                 const idx = r * BOARD_COLS + c;
                 
-                // 사용자가 수동으로 수정한 셀은 캡처로 덮어쓰지 않음
                 if (manuallyModifiedCells.has(idx)) continue;
 
                 const centerX = Math.floor(startX + c * cellW + cellW / 2);
@@ -485,7 +486,6 @@
           if (clickMode === 'OFF') return;
           saveHistory();
 
-          // 사용자가 수동으로 변경한 셀로 등록하여 캡처 자동 덮어쓰기 방지
           setManuallyModifiedCells(prev => {
             const next = new Set(prev);
             next.add(index);
@@ -568,7 +568,6 @@
           });
 
           setBoard(Array.from(grid));
-          // 솔버가 배치한 셀들도 수동 수정 영역에 포함하여 캡처에 의해 지워지지 않도록 보호
           setManuallyModifiedCells(prev => {
             const next = new Set(prev);
             grid.forEach((val, idx) => {
@@ -814,7 +813,7 @@
                     </button>
                   </div>
                   <p className="text-xs text-slate-400 mb-2">
-                    게임판의 10x16 격자 보드만 정확히 드래그해주시면, 나뭇잎 등 배경 노이즈는 자동으로 걸러집니다.
+                    게임판의 10x16 격자 보드만 정확히 드래그해주시면, 배경은 자동으로 걸러집니다.
                   </p>
                   <div className="relative border-2 border-dashed border-amber-500/60 rounded-lg overflow-hidden max-h-[70vh]">
                     <canvas
@@ -836,8 +835,8 @@
                   <div className="flex items-center gap-2">
                     <span className="text-lg">✨</span>
                     <div>
-                      <span className="font-extrabold text-xs sm:text-sm text-indigo-300">수동 수정 보호 모드 (사용자 입력 우선 반영)</span>
-                      <p className="text-[10px] text-slate-400">수동으로 추가/삭제한 셀은 다시 터치하거나 초기화할 때까지 캡처 값으로 변경되지 않습니다.</p>
+                      <span className="font-extrabold text-xs sm:text-sm text-indigo-300">흰색 & 얼룩무늬 블록 전용 인식 모드</span>
+                      <p className="text-[10px] text-slate-400">밝은 흰색 블록과 검정/흰색이 섞인 얼룩무늬 블록만 정확히 인식합니다.</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -985,7 +984,7 @@
                       onClick={() => setShowDebugPreview(!showDebugPreview)}
                       className="text-[11px] text-indigo-400 hover:text-indigo-300 font-bold mb-1 underline"
                     >
-                      {showDebugPreview ? '🔍 인식 프리뷰 닫기' : '🔍 인식 프리뷰 열기 (컬러 블록 인식 확인)'}
+                      {showDebugPreview ? '🔍 인식 프리뷰 닫기' : '🔍 인식 프리뷰 열기 (인식 상태 확인)'}
                     </button>
                     {showDebugPreview && (
                       <div className="p-1.5 bg-black border border-indigo-500/50 rounded-lg flex flex-col items-center">
