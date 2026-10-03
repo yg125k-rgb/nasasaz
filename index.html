@@ -66,6 +66,7 @@
 
       const BOARD_COLS = 10;
       const BOARD_ROWS = 16;
+      const TOTAL_CELLS = BOARD_COLS * BOARD_ROWS;
 
       const rotateMatrix = (matrix) => {
         const rows = matrix.length;
@@ -96,10 +97,23 @@
         return orientations;
       };
 
+      // 2차원 matrix -> 1차원 offset 변환 함수
+      const shapeToOffsets = (shape) => {
+        const offsets = [];
+        const h = shape.length;
+        const w = shape[0].length;
+        for (let r = 0; r < h; r++) {
+          for (let c = 0; c < w; c++) {
+            if (shape[r][c] === 1) {
+              offsets.push(r * BOARD_COLS + c);
+            }
+          }
+        }
+        return { offsets, h, w };
+      };
+
       function App() {
-        const [board, setBoard] = useState(() => 
-          Array.from({ length: BOARD_ROWS }, () => Array(BOARD_COLS).fill(0))
-        );
+        const [board, setBoard] = useState(() => Array(TOTAL_CELLS).fill(0));
         const [placedBlocksCount, setPlacedBlocksCount] = useState(0);
         const [clearedLinesCount, setClearedLinesCount] = useState(0);
         const [manualMode, setManualMode] = useState(true);
@@ -113,7 +127,7 @@
           setHistory(prev => [
             ...prev,
             {
-              board: JSON.parse(JSON.stringify(board)),
+              board: [...board],
               placedBlocksCount,
               clearedLinesCount,
               selectedBlockIds: [...selectedBlockIds]
@@ -132,17 +146,17 @@
           setMessage('이전 상태로 되돌렸습니다.');
         }, [history]);
 
-        const handleCellClick = (r, c) => {
+        const handleCellClick = (index) => {
           if (!manualMode) return;
           saveHistory();
-          const newBoard = board.map(row => [...row]);
-          newBoard[r][c] = newBoard[r][c] === 1 ? 0 : 1;
+          const newBoard = [...board];
+          newBoard[index] = newBoard[index] === 1 ? 0 : 1;
           setBoard(newBoard);
         };
 
         const handleResetMap = () => {
           saveHistory();
-          setBoard(Array.from({ length: BOARD_ROWS }, () => Array(BOARD_COLS).fill(0)));
+          setBoard(Array(TOTAL_CELLS).fill(0));
           setPlacedBlocksCount(0);
           setClearedLinesCount(0);
           setMessage('맵이 초기화되었습니다.');
@@ -170,7 +184,7 @@
           }
         };
 
-        // 초고속 자동 배치 함수
+        // 🚀 초고속 1차원 초경량 탐색 엔진
         const handleAutoPlace = useCallback(() => {
           if (selectedBlockIds.length === 0) {
             setMessage('배치할 블록을 1개 이상 선택해 주세요.');
@@ -184,10 +198,14 @@
             try {
               saveHistory();
               const chosenBlocks = selectedBlockIds.map(id => blocks.find(b => b.id === id));
-              const blockOrientations = chosenBlocks.map(b => getAllOrientations(b.shape));
+              const blockOrientations = chosenBlocks.map(b => 
+                getAllOrientations(b.shape).map(s => shapeToOffsets(s))
+              );
 
-              let bestPlacement = null;
-              let maxScore = -999999;
+              let bestBoard = null;
+              let bestCleared = 0;
+              let bestPlacedCount = 0;
+              let maxScore = -9999999;
 
               // 순열 생성
               const getPermutations = (arr) => {
@@ -202,125 +220,129 @@
                 return res;
               };
 
-              const indices = chosenBlocks.map((_, i) => i);
-              const orderPermutations = getPermutations(indices);
+              const seqs = getPermutations(chosenBlocks.map((_, i) => i));
 
-              const canPlaceBlock = (grid, shape, startR, startC) => {
-                const sRows = shape.length;
-                const sCols = shape[0].length;
-                if (startR + sRows > BOARD_ROWS || startC + sCols > BOARD_COLS) return false;
-                for (let r = 0; r < sRows; r++) {
-                  for (let c = 0; c < sCols; c++) {
-                    if (shape[r][c] === 1 && grid[startR + r][startC + c] === 1) return false;
-                  }
+              const applyPlacementFast = (currentBoard, offsets, startR, startC) => {
+                const nextBoard = new Uint8Array(currentBoard);
+                const startIndex = startR * BOARD_COLS + startC;
+                for (let i = 0; i < offsets.length; i++) {
+                  nextBoard[startIndex + offsets[i]] = 1;
                 }
-                return true;
-              };
 
-              const placeBlock = (grid, shape, startR, startC) => {
-                const newGrid = grid.map(row => [...row]);
-                for (let r = 0; r < shape.length; r++) {
-                  for (let c = 0; c < shape[0].length; c++) {
-                    if (shape[r][c] === 1) newGrid[startR + r][startC + c] = 1;
-                  }
-                }
+                // 줄 삭제 처리
                 let cleared = 0;
-                const remainingRows = [];
-                for (let r = 0; r < BOARD_ROWS; r++) {
-                  if (newGrid[r].every(cell => cell === 1)) {
+                let writeRow = BOARD_ROWS - 1;
+                const finalBoard = new Uint8Array(TOTAL_CELLS);
+
+                for (let r = BOARD_ROWS - 1; r >= 0; r--) {
+                  let isFull = true;
+                  const rowStart = r * BOARD_COLS;
+                  for (let c = 0; c < BOARD_COLS; c++) {
+                    if (nextBoard[rowStart + c] === 0) {
+                      isFull = false;
+                      break;
+                    }
+                  }
+                  if (isFull) {
                     cleared++;
                   } else {
-                    remainingRows.push([...newGrid[r]]);
+                    const writeStart = writeRow * BOARD_COLS;
+                    for (let c = 0; c < BOARD_COLS; c++) {
+                      finalBoard[writeStart + c] = nextBoard[rowStart + c];
+                    }
+                    writeRow--;
                   }
                 }
-                while (remainingRows.length < BOARD_ROWS) {
-                  remainingRows.unshift(Array(BOARD_COLS).fill(0));
-                }
-                return { grid: remainingRows, clearedLines: cleared };
+                return { board: Array.from(finalBoard), cleared };
               };
 
-              // 그리드 점수 평가 함수
-              const evaluateGrid = (grid, totalCleared, depth) => {
+              const evalBoard = (arrBoard, cleared) => {
                 let holes = 0;
-                let heightSum = 0;
+                let totalBlocks = 0;
                 for (let c = 0; c < BOARD_COLS; c++) {
-                  let blockFound = false;
+                  let found = false;
                   for (let r = 0; r < BOARD_ROWS; r++) {
-                    if (grid[r][c] === 1) {
-                      blockFound = true;
-                      heightSum += (BOARD_ROWS - r);
-                    } else if (blockFound && grid[r][c] === 0) {
+                    if (arrBoard[r * BOARD_COLS + c] === 1) {
+                      found = true;
+                      totalBlocks++;
+                    } else if (found) {
                       holes++;
                     }
                   }
                 }
-                return (totalCleared * 2000) - (holes * 50) - (heightSum * 2) + (depth * 10);
+                return (cleared * 10000) - (holes * 100) + totalBlocks;
               };
 
-              // 탐색 알고리즘 실행
-              for (const seq of orderPermutations) {
-                const dfs = (currentGrid, stepIndex, currentCleared) => {
-                  if (stepIndex === seq.length) {
-                    const score = evaluateGrid(currentGrid, currentCleared, seq.length);
+              for (const seq of seqs) {
+                const solveDepth = (currentBoard, step, clearedAcc) => {
+                  if (step === seq.length) {
+                    const score = evalBoard(currentBoard, clearedAcc);
                     if (score > maxScore) {
                       maxScore = score;
-                      bestPlacement = {
-                        finalGrid: currentGrid,
-                        totalCleared: currentCleared,
-                        placementsCount: seq.length
-                      };
+                      bestBoard = currentBoard;
+                      bestCleared = clearedAcc;
+                      bestPlacedCount = seq.length;
                     }
                     return;
                   }
 
-                  const blockIdx = seq[stepIndex];
+                  const blockIdx = seq[step];
                   const orientations = blockOrientations[blockIdx];
 
-                  for (const shape of orientations) {
-                    const maxR = BOARD_ROWS - shape.length;
-                    const maxC = BOARD_COLS - shape[0].length;
+                  for (const { offsets, h, w } of orientations) {
+                    const maxR = BOARD_ROWS - h;
+                    const maxC = BOARD_COLS - w;
+
                     for (let r = 0; r <= maxR; r++) {
                       for (let c = 0; c <= maxC; c++) {
-                        if (canPlaceBlock(currentGrid, shape, r, c)) {
-                          const { grid: nextGrid, clearedLines } = placeBlock(currentGrid, shape, r, c);
+                        const startIndex = r * BOARD_COLS + c;
+                        let fit = true;
+                        for (let i = 0; i < offsets.length; i++) {
+                          if (currentBoard[startIndex + offsets[i]] === 1) {
+                            fit = false;
+                            break;
+                          }
+                        }
+
+                        if (fit) {
+                          const { board: nextBoard, cleared } = applyPlacementFast(currentBoard, offsets, r, c);
+                          const currentCleared = clearedAcc + cleared;
                           
-                          // 중간 단계라도 최선책 저장
-                          const score = evaluateGrid(nextGrid, currentCleared + clearedLines, stepIndex + 1);
+                          // 중간 최선책 갱신
+                          const score = evalBoard(nextBoard, currentCleared);
                           if (score > maxScore) {
                             maxScore = score;
-                            bestPlacement = {
-                              finalGrid: nextGrid,
-                              totalCleared: currentCleared + clearedLines,
-                              placementsCount: stepIndex + 1
-                            };
+                            bestBoard = nextBoard;
+                            bestCleared = currentCleared;
+                            bestPlacedCount = step + 1;
                           }
 
-                          dfs(nextGrid, stepIndex + 1, currentCleared + clearedLines);
+                          solveDepth(nextBoard, step + 1, currentCleared);
                         }
                       }
                     }
                   }
                 };
 
-                dfs(board, 0, 0);
+                solveDepth(board, 0, 0);
               }
 
-              if (bestPlacement) {
-                setBoard(bestPlacement.finalGrid);
-                setPlacedBlocksCount(prev => prev + bestPlacement.placementsCount);
-                setClearedLinesCount(prev => prev + bestPlacement.totalCleared);
+              if (bestBoard) {
+                setBoard(bestBoard);
+                setPlacedBlocksCount(prev => prev + bestPlacedCount);
+                setClearedLinesCount(prev => prev + bestCleared);
                 setSelectedBlockIds([]);
-                setMessage(`자동 배치 완료! (${bestPlacement.totalCleared}줄 삭제됨)`);
+                setMessage(`자동 배치 완료! (${bestCleared}줄 삭제됨)`);
               } else {
                 setMessage('선택한 블록을 배치할 수 있는 자리가 없습니다.');
               }
             } catch (err) {
               console.error(err);
-              setMessage('계산 도중 문제가 발생했습니다.');
+              setMessage('계산 도중 에러가 발생했습니다.');
             } finally {
               setIsSolving(false);
             }
-          }, 30);
+          }, 10);
         }, [selectedBlockIds, blocks, board, saveHistory]);
 
         return (
@@ -347,19 +369,17 @@
 
                 <div className="board-grid-wrapper my-2">
                   <div className="board-grid-container">
-                    {board.map((row, rIdx) =>
-                      row.map((cell, cIdx) => (
-                        <div
-                          key={`${rIdx}-${cIdx}`}
-                          onClick={() => handleCellClick(rIdx, cIdx)}
-                          className={`cell-item rounded-[2px] cursor-pointer transition-all duration-150 flex items-center justify-center ${
-                            cell === 1 ? 'bg-gradient-to-br from-pink-500 to-rose-600 shadow-sm border border-pink-400/30' : 'bg-[#18202c] hover:bg-[#253246]'
-                          }`}
-                        >
-                          {cell === 1 && <div className="w-1.5 h-1.5 rounded-full bg-pink-200/50" />}
-                        </div>
-                      ))
-                    )}
+                    {board.map((cell, idx) => (
+                      <div
+                        key={idx}
+                        onClick={() => handleCellClick(idx)}
+                        className={`cell-item rounded-[2px] cursor-pointer transition-all duration-150 flex items-center justify-center ${
+                          cell === 1 ? 'bg-gradient-to-br from-pink-500 to-rose-600 shadow-sm border border-pink-400/30' : 'bg-[#18202c] hover:bg-[#253246]'
+                        }`}
+                      >
+                        {cell === 1 && <div className="w-1.5 h-1.5 rounded-full bg-pink-200/50" />}
+                      </div>
+                    ))}
                   </div>
                 </div>
 
@@ -389,7 +409,7 @@
                     disabled={isSolving}
                     className="flex items-center justify-center gap-2 py-3 px-4 rounded-2xl font-extrabold text-sm sm:text-base bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white shadow-lg transition-all disabled:opacity-50"
                   >
-                    {isSolving ? '⏳ 계산 중...' : '▶️ 자동 배치'}
+                    {isSolving ? '⚡ 초고속 계산 중...' : '▶️ 자동 배치'}
                   </button>
                   <button
                     onClick={handleUndo}
