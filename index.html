@@ -170,41 +170,7 @@
           }
         };
 
-        const canPlace = (grid, shape, startR, startC) => {
-          const sRows = shape.length;
-          const sCols = shape[0].length;
-          if (startR + sRows > BOARD_ROWS || startC + sCols > BOARD_COLS) return false;
-          for (let r = 0; r < sRows; r++) {
-            for (let c = 0; c < sCols; c++) {
-              if (shape[r][c] === 1 && grid[startR + r][startC + c] === 1) return false;
-            }
-          }
-          return true;
-        };
-
-        const applyPlacement = (grid, shape, startR, startC) => {
-          const newGrid = grid.map(row => [...row]);
-          for (let r = 0; r < shape.length; r++) {
-            for (let c = 0; c < shape[0].length; c++) {
-              if (shape[r][c] === 1) newGrid[startR + r][startC + c] = 1;
-            }
-          }
-          let cleared = 0;
-          const remainingRows = [];
-          for (let r = 0; r < BOARD_ROWS; r++) {
-            if (newGrid[r].every(cell => cell === 1)) {
-              cleared++;
-            } else {
-              remainingRows.push([...newGrid[r]]);
-            }
-          }
-          while (remainingRows.length < BOARD_ROWS) {
-            remainingRows.unshift(Array(BOARD_COLS).fill(0));
-          }
-          return { grid: remainingRows, clearedLines: cleared };
-        };
-
-        // 최적화된 비동기 자동 배치 함수
+        // 초고속 자동 배치 함수
         const handleAutoPlace = useCallback(() => {
           if (selectedBlockIds.length === 0) {
             setMessage('배치할 블록을 1개 이상 선택해 주세요.');
@@ -214,15 +180,16 @@
           setIsSolving(true);
           setMessage('최적의 배치를 계산 중입니다...');
 
-          // UI 렌더링 후 계산을 비동기로 시작
           setTimeout(() => {
             try {
               saveHistory();
               const chosenBlocks = selectedBlockIds.map(id => blocks.find(b => b.id === id));
-              
-              // 각 블록의 모양 정보 사전 생성
               const blockOrientations = chosenBlocks.map(b => getAllOrientations(b.shape));
 
+              let bestPlacement = null;
+              let maxScore = -999999;
+
+              // 순열 생성
               const getPermutations = (arr) => {
                 if (arr.length <= 1) return [arr];
                 const res = [];
@@ -238,49 +205,104 @@
               const indices = chosenBlocks.map((_, i) => i);
               const orderPermutations = getPermutations(indices);
 
-              let bestPlacement = null;
-              let maxScore = -999999;
+              const canPlaceBlock = (grid, shape, startR, startC) => {
+                const sRows = shape.length;
+                const sCols = shape[0].length;
+                if (startR + sRows > BOARD_ROWS || startC + sCols > BOARD_COLS) return false;
+                for (let r = 0; r < sRows; r++) {
+                  for (let c = 0; c < sCols; c++) {
+                    if (shape[r][c] === 1 && grid[startR + r][startC + c] === 1) return false;
+                  }
+                }
+                return true;
+              };
 
-              const solve = (currentGrid, seqIndices, stepIndex, currentCleared) => {
-                if (stepIndex === seqIndices.length) {
-                  let holes = 0, totalCells = 0;
+              const placeBlock = (grid, shape, startR, startC) => {
+                const newGrid = grid.map(row => [...row]);
+                for (let r = 0; r < shape.length; r++) {
+                  for (let c = 0; c < shape[0].length; c++) {
+                    if (shape[r][c] === 1) newGrid[startR + r][startC + c] = 1;
+                  }
+                }
+                let cleared = 0;
+                const remainingRows = [];
+                for (let r = 0; r < BOARD_ROWS; r++) {
+                  if (newGrid[r].every(cell => cell === 1)) {
+                    cleared++;
+                  } else {
+                    remainingRows.push([...newGrid[r]]);
+                  }
+                }
+                while (remainingRows.length < BOARD_ROWS) {
+                  remainingRows.unshift(Array(BOARD_COLS).fill(0));
+                }
+                return { grid: remainingRows, clearedLines: cleared };
+              };
+
+              // 그리드 점수 평가 함수
+              const evaluateGrid = (grid, totalCleared, depth) => {
+                let holes = 0;
+                let heightSum = 0;
+                for (let c = 0; c < BOARD_COLS; c++) {
+                  let blockFound = false;
                   for (let r = 0; r < BOARD_ROWS; r++) {
-                    for (let c = 0; c < BOARD_COLS; c++) {
-                      if (currentGrid[r][c] === 1) totalCells++;
-                      else if (r > 0 && currentGrid[r - 1][c] === 1) holes++;
+                    if (grid[r][c] === 1) {
+                      blockFound = true;
+                      heightSum += (BOARD_ROWS - r);
+                    } else if (blockFound && grid[r][c] === 0) {
+                      holes++;
                     }
                   }
-                  const score = (currentCleared * 1000) - (holes * 15) + (totalCells * 2);
-                  if (score > maxScore) {
-                    maxScore = score;
-                    bestPlacement = {
-                      finalGrid: currentGrid,
-                      totalCleared: currentCleared,
-                      placementsCount: seqIndices.length
-                    };
-                  }
-                  return;
                 }
+                return (totalCleared * 2000) - (holes * 50) - (heightSum * 2) + (depth * 10);
+              };
 
-                const blockIdx = seqIndices[stepIndex];
-                const orientations = blockOrientations[blockIdx];
+              // 탐색 알고리즘 실행
+              for (const seq of orderPermutations) {
+                const dfs = (currentGrid, stepIndex, currentCleared) => {
+                  if (stepIndex === seq.length) {
+                    const score = evaluateGrid(currentGrid, currentCleared, seq.length);
+                    if (score > maxScore) {
+                      maxScore = score;
+                      bestPlacement = {
+                        finalGrid: currentGrid,
+                        totalCleared: currentCleared,
+                        placementsCount: seq.length
+                      };
+                    }
+                    return;
+                  }
 
-                for (const shape of orientations) {
-                  const maxR = BOARD_ROWS - shape.length;
-                  const maxC = BOARD_COLS - shape[0].length;
-                  for (let r = 0; r <= maxR; r++) {
-                    for (let c = 0; c <= maxC; c++) {
-                      if (canPlace(currentGrid, shape, r, c)) {
-                        const { grid: nextGrid, clearedLines } = applyPlacement(currentGrid, shape, r, c);
-                        solve(nextGrid, seqIndices, stepIndex + 1, currentCleared + clearedLines);
+                  const blockIdx = seq[stepIndex];
+                  const orientations = blockOrientations[blockIdx];
+
+                  for (const shape of orientations) {
+                    const maxR = BOARD_ROWS - shape.length;
+                    const maxC = BOARD_COLS - shape[0].length;
+                    for (let r = 0; r <= maxR; r++) {
+                      for (let c = 0; c <= maxC; c++) {
+                        if (canPlaceBlock(currentGrid, shape, r, c)) {
+                          const { grid: nextGrid, clearedLines } = placeBlock(currentGrid, shape, r, c);
+                          
+                          // 중간 단계라도 최선책 저장
+                          const score = evaluateGrid(nextGrid, currentCleared + clearedLines, stepIndex + 1);
+                          if (score > maxScore) {
+                            maxScore = score;
+                            bestPlacement = {
+                              finalGrid: nextGrid,
+                              totalCleared: currentCleared + clearedLines,
+                              placementsCount: stepIndex + 1
+                            };
+                          }
+
+                          dfs(nextGrid, stepIndex + 1, currentCleared + clearedLines);
+                        }
                       }
                     }
                   }
-                }
-              };
+                };
 
-              for (const seq of orderPermutations) {
-                solve(board, seq, 0, 0);
+                dfs(board, 0, 0);
               }
 
               if (bestPlacement) {
@@ -288,17 +310,17 @@
                 setPlacedBlocksCount(prev => prev + bestPlacement.placementsCount);
                 setClearedLinesCount(prev => prev + bestPlacement.totalCleared);
                 setSelectedBlockIds([]);
-                setMessage(`자동 배치 완료! (${bestPlacement.totalCleared} 줄 삭제됨)`);
+                setMessage(`자동 배치 완료! (${bestPlacement.totalCleared}줄 삭제됨)`);
               } else {
                 setMessage('선택한 블록을 배치할 수 있는 자리가 없습니다.');
               }
             } catch (err) {
               console.error(err);
-              setMessage('계산 중 오류가 발생했습니다. 다시 시도해 주세요.');
+              setMessage('계산 도중 문제가 발생했습니다.');
             } finally {
               setIsSolving(false);
             }
-          }, 50);
+          }, 30);
         }, [selectedBlockIds, blocks, board, saveHistory]);
 
         return (
@@ -380,7 +402,7 @@
 
                 {message && (
                   <div className="bg-slate-800/90 border border-slate-700 rounded-xl py-2 px-4 text-xs sm:text-sm text-indigo-300 flex items-center justify-between shadow-sm">
-                    <span>ℹ️️ {message}</span>
+                    <span>ℹ {message}</span>
                     <button onClick={() => setMessage('')} className="text-slate-400 hover:text-white ml-2">✕</button>
                   </div>
                 )}
