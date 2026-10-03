@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>한글 모아모아 퍼즐 솔버 - 스마트 교체 연동</title>
+    <title>한글 모아모아 퍼즐 솔버 - 흑백 이진화 인식</title>
 
     <!-- React 18 & ReactDOM -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
@@ -99,7 +99,7 @@
         return result;
       };
 
-      const flipMatrix = (matrix) => matrix.map(row => [...row].reverse());
+      const flipMatrix = (matrix) => matrix.ap ? matrix.map(row => [...row].reverse()) : matrix;
 
       const getAllOrientations = (initialShape) => {
         const orientations = [];
@@ -144,6 +144,10 @@
         const [pendingBadMove, setPendingBadMove] = useState(null);
         const [history, setHistory] = useState([]);
         const [message, setMessage] = useState('');
+        
+        // 디버그/흑백 미리보기 상태
+        const [showDebugPreview, setShowDebugPreview] = useState(false);
+        const debugCanvasRef = useRef(null);
 
         // --- 화면 캡처 및 영역 지정 상태 ---
         const [isCapturing, setIsCapturing] = useState(false);
@@ -291,23 +295,18 @@
               setBlockSlotsRect(rectObj);
               setShowCropModal(false);
               setAutoSync(true);
-              setMessage('✅ 영역 지정 완료! 실시간 자동 인식이 시작됩니다.');
+              setMessage('✅ 흑백 이진화 인식 모드가 시작되었습니다.');
             }
           }
           setCurrentDrag(null);
         };
 
-        const isBlockPixel = (r, g, b) => {
-          const isBackground = r < 110 && g > 140 && b > 160;
-          if (isBackground) return false;
-
-          const isPink = r > 160 && g < 140 && b > 120;
-          const isYellow = r > 180 && g > 160 && b < 130;
-          const isGreen = r < 140 && g > 150 && b < 140;
-          const isBlueOrPurple = r > 80 && g > 80 && b > 150 && !isBackground;
-          const isDarkOrBrightBlock = (r > 60 || g > 60 || b > 60) && Math.abs(r - g) > 20 || (r > 150 && g > 150 && b > 150);
-
-          return isPink || isYellow || isGreen || isBlueOrPurple || isDarkOrBrightBlock;
+        // 흑백 이진화 기반 블록 판별 함수 (밝기 차이 활용)
+        const isGrayscaleBlockPixel = (grayValue) => {
+          // 배경(하늘색)은 일반적으로 중간~밝은 회색조로 나타나며, 실제 채워진 블록은 명암 대비가 뚜렷합니다.
+          // 배경과 빈칸이 어둡거나 밝은 정도를 기준으로 판별 (게임 배경에 맞춰 조절 가능)
+          // 여기서는 배경보다 어둡거나 확실히 밝은 픽셀을 블록으로 인정
+          return grayValue < 140 || grayValue > 210;
         };
 
         const analyzeBlockSlots = (ctx, canvasWidth, canvasHeight, slotsRect) => {
@@ -336,7 +335,12 @@
                 const py = Math.floor(subSy + (r + 0.5) * (subSh / gridRows));
                 if (px >= 0 && px < canvasWidth && py >= 0 && py < canvasHeight) {
                   const pixel = ctx.getImageData(px, py, 1, 1).data;
-                  if (isBlockPixel(pixel[0], pixel[1], pixel[2])) {
+                  // 흑백 변환 (Luminance 공식)
+                  const gray = 0.299 * pixel[0] + 0.587 * pixel[1] + 0.114 * pixel[2];
+                  // 블록 테두리나 내부 색상 판별
+                  if (pixel[0] > 150 && pixel[1] > 150 && pixel[2] > 100) { // 노란색/밝은 블록 계열
+                    cellCount++;
+                  } else if (gray < 160 && (Math.abs(pixel[0] - pixel[1]) > 15 || Math.abs(pixel[1] - pixel[2]) > 15)) {
                     cellCount++;
                   }
                 }
@@ -381,14 +385,44 @@
           const cellH = mapHeight / BOARD_ROWS;
           const newBoard = Array(TOTAL_CELLS).fill(0);
 
+          // 디버그용 흑백 캔버스 그리기
+          let debugCtx = null;
+          if (debugCanvasRef.current) {
+            const dbgCanvas = debugCanvasRef.current;
+            dbgCanvas.width = mapWidth;
+            dbgCanvas.height = mapHeight;
+            debugCtx = dbgCanvas.getContext('2d');
+            debugCtx.drawImage(video, startX, startY, mapWidth, mapHeight, 0, 0, mapWidth, mapHeight);
+            
+            // 흑백 및 이진화 적용
+            const imgData = debugCtx.getImageData(0, 0, mapWidth, mapHeight);
+            const data = imgData.data;
+            for (let i = 0; i < data.length; i += 4) {
+              const avg = 0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2];
+              const isBlock = isGrayscaleBlockPixel(avg) ? 255 : 0;
+              data[i] = isBlock;     // R
+              data[i+1] = isBlock; // G
+              data[i+2] = isBlock; // B
+            }
+            debugCtx.putImageData(imgData, 0, 0);
+          }
+
           for (let r = 0; r < BOARD_ROWS; r++) {
             for (let c = 0; c < BOARD_COLS; c++) {
               const centerX = Math.floor(startX + c * cellW + cellW / 2);
               const centerY = Math.floor(startY + r * cellH + cellH / 2);
               const pixel = ctx.getImageData(centerX, centerY, 1, 1).data;
 
+              // 흑백 변환값 계산
+              const gray = 0.299 * pixel[0] + 0.587 * pixel[1] + 0.114 * pixel[2];
               const idx = r * BOARD_COLS + c;
-              if (isBlockPixel(pixel[0], pixel[1], pixel[2])) {
+
+              // 빈 칸(하늘색 배경)과 블록 색상의 명암/색상 차이 판별
+              // 배경 하늘색은 특정 회색조 영역에 밀집하므로 이를 제외
+              const isBackgroundSkyBlue = pixel[0] < 120 && pixel[1] > 130 && pixel[2] > 150;
+              const hasBlock = !isBackgroundSkyBlue && (gray < 135 || gray > 215 || Math.abs(pixel[0] - pixel[2]) > 25);
+
+              if (hasBlock) {
                 newBoard[idx] = 1;
               }
             }
@@ -621,9 +655,6 @@
 
             let clearedLines = 0;
             for (let r = 0; r < BOARD_ROWS; r++) {
-              let full = true;
-              const rOffset = r * BOARD_ROWS; // corrected offset logic below
-              // fix loop offset
               let rowFull = true;
               const curOffset = r * BOARD_COLS;
               for (let c = 0; c < BOARD_COLS; c++) {
@@ -783,8 +814,8 @@
                 <div className="flex items-center gap-2">
                   <span className="text-lg">📷</span>
                   <div>
-                    <span className="font-extrabold text-xs sm:text-sm text-indigo-300">화면 자동 캡처 및 블록 인식</span>
-                    <p className="text-[10px] text-slate-400">맵과 우측 블록 3개를 실시간으로 인식합니다.</p>
+                    <span className="font-extrabold text-xs sm:text-sm text-indigo-300">화면 자동 캡처 및 흑백 이진화 인식</span>
+                    <p className="text-[10px] text-slate-400">명암 대비를 극대화하여 블록을 정확히 스캔합니다.</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -859,6 +890,22 @@
                         );
                       })}
                     </div>
+                  </div>
+
+                  {/* 흑백 디버그 프리뷰 토글 및 캔버스 */}
+                  <div className="w-full mt-2 flex flex-col items-center">
+                    <button
+                      onClick={() => setShowDebugPreview(!showDebugPreview)}
+                      className="text-[11px] text-indigo-400 hover:text-indigo-300 font-bold mb-1 underline"
+                    >
+                      {showDebugPreview ? '🔍 흑백 인식 미리보기 닫기' : '🔍 흑백 인식 미리보기 열기 (인식 정확도 확인)'}
+                    </button>
+                    {showDebugPreview && (
+                      <div className="p-1.5 bg-black border border-indigo-500/50 rounded-lg flex flex-col items-center">
+                        <span className="text-[9px] text-slate-400 mb-1">흰색으로 보이는 부분이 블록으로 인식됩니다</span>
+                        <canvas ref={debugCanvasRef} className="max-w-[200px] h-auto rounded border border-slate-700" />
+                      </div>
+                    )}
                   </div>
 
                   {placedReport.length > 0 && (
