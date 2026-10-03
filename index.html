@@ -113,7 +113,7 @@
         const [clearedLinesCount, setClearedLinesCount] = useState(0);
         const [manualMode, setManualMode] = useState(true);
         const [blocks, setBlocks] = useState(INITIAL_BLOCK_TEMPLATES);
-        const [selectedBlockIds, setSelectedBlockIds] = useState([]);
+        const [selectedBlockIds, setSelectedBlockIds] = useState([]); // 중복 허용 ID 배열
         const [history, setHistory] = useState([]);
         const [isSolving, setIsSolving] = useState(false);
         const [message, setMessage] = useState('');
@@ -172,16 +172,19 @@
           setBlocks(prev => prev.map(b => b.id === id ? { ...b, shape: flipMatrix(b.shape) } : b));
         };
 
+        // 🌟 동일한 블록도 중복 클릭하여 추가할 수 있는 핸들러 (최대 3개)
         const handleSelectBlock = (id) => {
-          if (selectedBlockIds.includes(id)) {
-            setSelectedBlockIds(prev => prev.filter(item => item !== id));
-          } else {
-            if (selectedBlockIds.length >= 3) {
-              setMessage('블록은 최대 3개까지 선택할 수 있습니다.');
-              return;
-            }
-            setSelectedBlockIds(prev => [...prev, id]);
+          if (selectedBlockIds.length >= 3) {
+            setMessage('블록은 최대 3개까지만 선택할 수 있습니다.');
+            return;
           }
+          setSelectedBlockIds(prev => [...prev, id]);
+        };
+
+        // 선택된 개별 항목 하나 삭제
+        const handleRemoveSelectedAt = (index, e) => {
+          e.stopPropagation();
+          setSelectedBlockIds(prev => prev.filter((_, idx) => idx !== index));
         };
 
         const handleAutoPlace = useCallback(() => {
@@ -200,8 +203,12 @@
               let successfullyPlaced = 0;
               let newPlacedIndices = [];
 
+              // 중복 선택된 블록 ID들을 템플릿 객체 복사본으로 매핑 (크기순 정렬)
               const chosenBlocks = selectedBlockIds
-                .map(id => blocks.find(b => b.id === id))
+                .map(id => {
+                  const tmpl = blocks.find(b => b.id === id);
+                  return tmpl ? { ...tmpl, shape: tmpl.shape.map(r => [...r]) } : null;
+                })
                 .filter(Boolean)
                 .sort((a, b) => b.size - a.size);
 
@@ -294,7 +301,7 @@
 
               for (let i = 0; i < chosenBlocks.length; i++) {
                 const block = chosenBlocks[i];
-                const blockMarker = i + 2;
+                const blockMarker = i + 2; // 2: 1번, 3: 2번, 4: 3번
                 const orientations = getAllOrientations(block.shape);
                 let bestMove = null;
                 let maxScore = -999999;
@@ -326,8 +333,8 @@
                 setLastPlacedIndices(newPlacedIndices);
                 setPlacedBlocksCount(prev => prev + successfullyPlaced);
                 setClearedLinesCount(prev => prev + totalClearedLines);
-                setSelectedBlockIds([]); // 🌟 배치 완료 후 블록 선택 자동 초기화!
-                setMessage(`자동 배치 완료! 배치된 블록은 노란 테두리로 표시되고 선택은 초기화되었습니다.`);
+                setSelectedBlockIds([]); // 배치 완료 후 선택 초기화
+                setMessage(`자동 배치 완료! (${successfullyPlaced}개 배치됨, ${totalClearedLines}줄 삭제)`);
               } else {
                 setMessage('선택한 블록을 배치할 수 있는 자리가 없습니다.');
               }
@@ -347,7 +354,7 @@
                 한글 모아모아 퍼즐 솔버
               </h1>
               <p className="text-xs sm:text-sm text-slate-400 mt-1">
-                자동 배치 후 블록 선택은 자동 초기화되며, 위치는 노란 테두리로 강조됩니다
+                동일한 모양의 블록도 최대 3개까지 중복 선택하여 자동 배치할 수 있습니다
               </p>
             </header>
 
@@ -448,14 +455,39 @@
                     )}
                   </div>
 
-                  <p className="text-xs text-slate-400 mb-4">
-                    자동 배치가 완료되면 선택 목록은 비워지며, 다음 블록 3개를 바로 선택하여 이어서 배치할 수 있습니다.
+                  {/* 🌟 현재 선택된 블록 슬롯 현황 뱃지 */}
+                  <div className="flex gap-2 my-2 min-h-[32px]">
+                    {[0, 1, 2].map(slotIdx => {
+                      const blockId = selectedBlockIds[slotIdx];
+                      const tmpl = blockId ? blocks.find(b => b.id === blockId) : null;
+
+                      return tmpl ? (
+                        <div key={slotIdx} className="flex items-center gap-1.5 bg-pink-950/60 border border-pink-500/60 px-2.5 py-1 rounded-lg text-xs font-semibold text-pink-200 shadow-sm">
+                          <span className="w-4 h-4 rounded-full bg-pink-500 text-slate-950 flex items-center justify-center text-[10px] font-extrabold">{slotIdx + 1}</span>
+                          <span>{tmpl.name}</span>
+                          <button onClick={(e) => handleRemoveSelectedAt(slotIdx, e)} className="text-pink-400 hover:text-white ml-1 font-bold">✕</button>
+                        </div>
+                      ) : (
+                        <div key={slotIdx} className="flex items-center justify-center bg-slate-900/60 border border-dashed border-slate-800 px-3 py-1 rounded-lg text-xs text-slate-600 font-medium">
+                          슬롯 {slotIdx + 1}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <p className="text-xs text-slate-400 my-2">
+                    동일한 블록 카드를 여러 번 눌러 중복 선택할 수 있습니다. (최대 3개)
                   </p>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-[500px] overflow-y-auto pr-1">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-[460px] overflow-y-auto pr-1">
                     {blocks.map(block => {
-                      const isSelected = selectedBlockIds.includes(block.id);
-                      const selectOrder = selectedBlockIds.indexOf(block.id) + 1;
+                      // 이 블록이 선택된 슬롯 인덱스 모음 (1-based)
+                      const occurrences = selectedBlockIds
+                        .map((id, idx) => id === block.id ? idx + 1 : null)
+                        .filter(Boolean);
+
+                      const isSelected = occurrences.length > 0;
+
                       return (
                         <div
                           key={block.id}
@@ -467,9 +499,13 @@
                           <div className="w-full flex justify-between items-center mb-2">
                             <span className="text-[11px] font-bold text-slate-400 bg-slate-800/80 px-2 py-0.5 rounded-full">{block.name}</span>
                             {isSelected && (
-                              <span className="w-4 h-4 rounded-full bg-pink-500 flex items-center justify-center text-slate-950 text-[10px] font-extrabold">
-                                {selectOrder}
-                              </span>
+                              <div className="flex gap-1">
+                                {occurrences.map((orderNum, idx) => (
+                                  <span key={idx} className="w-4 h-4 rounded-full bg-pink-500 flex items-center justify-center text-slate-950 text-[10px] font-extrabold shadow-sm">
+                                    {orderNum}
+                                  </span>
+                                ))}
+                              </div>
                             )}
                           </div>
 
