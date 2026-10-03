@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>한글 모아모아 퍼즐 솔버 - 이미지 보정 버전</title>
+    <title>한글 모아모아 퍼즐 솔버 - 수동 수정 보호 버전</title>
 
     <!-- React 18 & ReactDOM -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
@@ -132,6 +132,7 @@
 
       function App() {
         const [board, setBoard] = useState(() => Array(TOTAL_CELLS).fill(0));
+        const [manuallyModifiedCells, setManuallyModifiedCells] = useState(() => new Set());
         const [lastPlacedIndices, setLastPlacedIndices] = useState([]);
         const [placedGhostOverlay, setPlacedGhostOverlay] = useState({});
         const [placedReport, setPlacedReport] = useState([]);
@@ -145,16 +146,14 @@
         const [history, setHistory] = useState([]);
         const [message, setMessage] = useState('');
 
-        // --- 이미지 보정 및 흑백 설정 상태 ---
-        const [isGrayscale, setIsGrayscale] = useState(true);
-        const [brightness, setBrightness] = useState(0); // -100 ~ 100
-        const [contrast, setContrast] = useState(0);     // -100 ~ 100
-        const [gamma, setGamma] = useState(1.0);         // 0.2 ~ 2.2
+        const [isGrayscale, setIsGrayscale] = useState(false);
+        const [brightness, setBrightness] = useState(0);
+        const [contrast, setContrast] = useState(0);
+        const [gamma, setGamma] = useState(1.0);
         
         const [showDebugPreview, setShowDebugPreview] = useState(false);
         const debugCanvasRef = useRef(null);
 
-        // --- 화면 캡처 및 영역 지정 상태 ---
         const [isCapturing, setIsCapturing] = useState(false);
         const [autoSync, setAutoSync] = useState(false);
         const [showCropModal, setShowCropModal] = useState(false);
@@ -295,7 +294,6 @@
           setCurrentDrag(null);
         };
 
-        // --- 이미지 후처리 필터 적용 헬퍼 함수 ---
         const processImageFilters = (imageData) => {
           const data = imageData.data;
           const contrastFactor = (259 * (contrast + 255)) / (255 * (259 - contrast));
@@ -305,32 +303,23 @@
             let g = data[i + 1];
             let b = data[i + 2];
 
-            // 1. 흑백 변환 (Grayscale)
             if (isGrayscale) {
               const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-              r = gray;
-              g = gray;
-              b = gray;
+              r = gray; g = gray; b = gray;
             }
 
-            // 2. 밝기 조절 (Brightness)
-            r += brightness;
-            g += brightness;
-            b += brightness;
-
-            // 3. 대비 조절 (Contrast)
+            r += brightness; g += brightness; b += brightness;
             r = contrastFactor * (r - 128) + 128;
             g = contrastFactor * (g - 128) + 128;
             b = contrastFactor * (b - 128) + 128;
 
-            // 4. 감마 보정 (Gamma)
             if (gamma !== 1.0 && gamma > 0) {
               r = 255 * Math.pow(Math.min(Math.max(r, 0), 255) / 255, 1 / gamma);
               g = 255 * Math.pow(Math.min(Math.max(g, 0), 255) / 255, 1 / gamma);
               b = 255 * Math.pow(Math.min(Math.max(b, 0), 255) / 255, 1 / gamma);
             }
 
-            data[i]     = Math.min(Math.max(r, 0), 255);
+            data[i] = Math.min(Math.max(r, 0), 255);
             data[i + 1] = Math.min(Math.max(g, 0), 255);
             data[i + 2] = Math.min(Math.max(b, 0), 255);
           }
@@ -342,45 +331,30 @@
           const r = p[0], g = p[1], b = p[2];
 
           if (isGrayscale) {
-            // 흑백 모드일 때 밝기 기준으로 판단
             const lum = (r + g + b) / 3;
-            // 배경색과 블록색 구별 (배경보다 어둡거나 확실히 밝은 입체 명암이 있는 경우)
             const pTop = ctx.getImageData(cx, cy - Math.floor(cellH * 0.25), 1, 1).data;
             const lumTop = (pTop[0] + pTop[1] + pTop[2]) / 3;
-
-            // 너무 어두운 배경이 아니거나 하이라이트가 있는 경우 블록으로 인정
             if (lum > 35 && (Math.abs(lum - lumTop) > 15 || lum > 110)) {
               return true;
             }
             return false;
           }
 
-          // 컬러 모드 판별 로직
-          const isSkyBlueBackground = (b > r + 15 && g > r + 8 && r < 135 && (r+g+b)/3 > 90 && (r+g+b)/3 < 220);
+          const isBackground = (b > r + 10 && g > r + 5 && r < 140 && (r + g + b) / 3 > 90 && (r + g + b) / 3 < 220);
+          if (isBackground) return false;
 
-          if (!isSkyBlueBackground) {
-            if ((r + g + b) / 3 > 25 && (Math.abs(r - g) > 8 || Math.abs(g - b) > 8 || r > 120 || g > 120 || b > 120)) {
-              let hasBlockFeatures = false;
-              const pTop = ctx.getImageData(cx, cy - Math.floor(cellH * 0.25), 1, 1).data;
-              const pEdge = ctx.getImageData(cx - Math.floor(cellW * 0.35), cy, 1, 1).data;
+          const isOrangeYellowBlock = (r > 150 && g > 90 && r > b + 30);
+          const isBlueBlock = (b > 110 && g > 90 && b >= r - 10 && !isBackground && ((b - r) > 20 || (g - r) > 15));
+          const isGreenBlock = (g > r + 20 && g > b + 15 && g > 100);
+          const isPinkMagentaBlock = (r > 150 && b > 120 && g < 140 && Math.abs(r - b) < 60);
 
-              if ((pTop[0] > 180 && pTop[1] > 180 && pTop[2] > 180) || (pEdge[0] < r - 15 || pEdge[2] < b - 15)) {
-                hasBlockFeatures = true;
-              }
-
-              if (Math.abs(r - g) > 25 || Math.abs(g - b) > 25 || (r > 200 && g > 160)) {
-                hasBlockFeatures = true;
-              }
-
-              if (hasBlockFeatures) return true;
-            }
+          if (isOrangeYellowBlock || isBlueBlock || isGreenBlock || isPinkMagentaBlock) {
+            return true;
           }
 
-          const pCenterTop = ctx.getImageData(cx, cy - 3, 1, 1).data;
-          if (pCenterTop[0] > 195 && pCenterTop[1] > 195 && pCenterTop[2] > 195) {
-            if (b > 130 && g > 110) {
-              return true;
-            }
+          const pTop = ctx.getImageData(cx, cy - Math.floor(cellH * 0.2), 1, 1).data;
+          if (pTop[0] > 190 && pTop[1] > 190 && pTop[2] > 190 && (r + g + b) / 3 > 80) {
+            return true;
           }
 
           return false;
@@ -403,7 +377,6 @@
 
           const cellW = mapWidth / BOARD_COLS;
           const cellH = mapHeight / BOARD_ROWS;
-          const newBoard = Array(TOTAL_CELLS).fill(0);
 
           if (debugCanvasRef.current) {
             const dbgCanvas = debugCanvasRef.current;
@@ -439,25 +412,28 @@
             debugCtx.putImageData(imgData, 0, 0);
           }
 
-          // 메인 분석용 캔버스에도 필터 적용
           let mainImgData = ctx.getImageData(startX, startY, mapWidth, mapHeight);
           mainImgData = processImageFilters(mainImgData);
           ctx.putImageData(mainImgData, startX, startY);
 
-          for (let r = 0; r < BOARD_ROWS; r++) {
-            for (let c = 0; c < BOARD_COLS; c++) {
-              const centerX = Math.floor(startX + c * cellW + cellW / 2);
-              const centerY = Math.floor(startY + r * cellH + cellH / 2);
-              const idx = r * BOARD_COLS + c;
+          setBoard(prevBoard => {
+            const nextBoard = [...prevBoard];
+            for (let r = 0; r < BOARD_ROWS; r++) {
+              for (let c = 0; c < BOARD_COLS; c++) {
+                const idx = r * BOARD_COLS + c;
+                
+                // 사용자가 수동으로 수정한 셀은 캡처로 덮어쓰지 않음
+                if (manuallyModifiedCells.has(idx)) continue;
 
-              if (isCellFilledBlock(ctx, centerX, centerY, cellW, cellH)) {
-                newBoard[idx] = 1;
+                const centerX = Math.floor(startX + c * cellW + cellW / 2);
+                const centerY = Math.floor(startY + r * cellH + cellH / 2);
+
+                nextBoard[idx] = isCellFilledBlock(ctx, centerX, centerY, cellW, cellH) ? 1 : 0;
               }
             }
-          }
-
-          setBoard(newBoard);
-        }, [cropRect, isGrayscale, brightness, contrast, gamma]);
+            return nextBoard;
+          });
+        }, [cropRect, isGrayscale, brightness, contrast, gamma, manuallyModifiedCells]);
 
         useEffect(() => {
           let intervalId = null;
@@ -476,6 +452,7 @@
             ...prev,
             {
               board: [...board],
+              manuallyModifiedCells: new Set(manuallyModifiedCells),
               lastPlacedIndices: [...lastPlacedIndices],
               placedGhostOverlay: { ...placedGhostOverlay },
               placedReport: [...placedReport],
@@ -485,12 +462,13 @@
               rerollCount
             }
           ]);
-        }, [board, lastPlacedIndices, placedGhostOverlay, placedReport, placedBlocksCount, clearedLinesCount, selectedBlockIds, rerollCount]);
+        }, [board, manuallyModifiedCells, lastPlacedIndices, placedGhostOverlay, placedReport, placedBlocksCount, clearedLinesCount, selectedBlockIds, rerollCount]);
 
         const handleUndo = useCallback(() => {
           if (history.length === 0) return;
           const lastState = history[history.length - 1];
           setBoard(lastState.board);
+          setManuallyModifiedCells(new Set(lastState.manuallyModifiedCells || []));
           setLastPlacedIndices(lastState.lastPlacedIndices || []);
           setPlacedGhostOverlay(lastState.placedGhostOverlay || {});
           setPlacedReport(lastState.placedReport || []);
@@ -506,6 +484,14 @@
         const handleCellClick = (index) => {
           if (clickMode === 'OFF') return;
           saveHistory();
+
+          // 사용자가 수동으로 변경한 셀로 등록하여 캡처 자동 덮어쓰기 방지
+          setManuallyModifiedCells(prev => {
+            const next = new Set(prev);
+            next.add(index);
+            return next;
+          });
+
           setBoard(prevBoard => {
             const nextBoard = [...prevBoard];
             nextBoard[index] = nextBoard[index] === 1 ? 0 : 1;
@@ -517,6 +503,7 @@
         const handleResetMap = () => {
           saveHistory();
           setBoard(Array(TOTAL_CELLS).fill(0));
+          setManuallyModifiedCells(new Set());
           setLastPlacedIndices([]);
           setPlacedGhostOverlay({});
           setPlacedReport([]);
@@ -581,6 +568,16 @@
           });
 
           setBoard(Array.from(grid));
+          // 솔버가 배치한 셀들도 수동 수정 영역에 포함하여 캡처에 의해 지워지지 않도록 보호
+          setManuallyModifiedCells(prev => {
+            const next = new Set(prev);
+            grid.forEach((val, idx) => {
+              if (val > 0) next.add(idx);
+              else next.delete(idx);
+            });
+            return next;
+          });
+
           setLastPlacedIndices(finalPlacedIndices);
           setPlacedGhostOverlay(ghostOverlayMap);
           setPlacedReport(stepReports);
@@ -839,8 +836,8 @@
                   <div className="flex items-center gap-2">
                     <span className="text-lg">✨</span>
                     <div>
-                      <span className="font-extrabold text-xs sm:text-sm text-indigo-300">정밀 인식 모드 (흑백 변환 및 이미지 보정 탑재)</span>
-                      <p className="text-[10px] text-slate-400">흑백 전환 및 밝기·대비·감마 조절로 블록 인식률을 조절할 수 있습니다.</p>
+                      <span className="font-extrabold text-xs sm:text-sm text-indigo-300">수동 수정 보호 모드 (사용자 입력 우선 반영)</span>
+                      <p className="text-[10px] text-slate-400">수동으로 추가/삭제한 셀은 다시 터치하거나 초기화할 때까지 캡처 값으로 변경되지 않습니다.</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -955,6 +952,7 @@
                         const style = CELL_STYLES[cellValue];
                         const isJustPlaced = lastPlacedIndices.includes(idx);
                         const ghostMarker = placedGhostOverlay[idx];
+                        const isManuallyModified = manuallyModifiedCells.has(idx);
 
                         return (
                           <div
@@ -964,6 +962,8 @@
                               isJustPlaced ? 'ring-2 ring-amber-300 ring-offset-1 ring-offset-slate-900 z-10 scale-[1.05] just-placed-highlight' : ''
                             } ${
                               !isJustPlaced && ghostMarker ? 'border border-dashed border-amber-300/60 bg-amber-500/10' : ''
+                            } ${
+                              isManuallyModified ? 'ring-1 ring-indigo-400/80' : ''
                             }`}
                           >
                             {style.text ? (
@@ -985,11 +985,11 @@
                       onClick={() => setShowDebugPreview(!showDebugPreview)}
                       className="text-[11px] text-indigo-400 hover:text-indigo-300 font-bold mb-1 underline"
                     >
-                      {showDebugPreview ? '🔍 인식 프리뷰 닫기' : '🔍 인식 프리뷰 열기 (흑백 및 보정 상태 확인)'}
+                      {showDebugPreview ? '🔍 인식 프리뷰 닫기' : '🔍 인식 프리뷰 열기 (컬러 블록 인식 확인)'}
                     </button>
                     {showDebugPreview && (
                       <div className="p-1.5 bg-black border border-indigo-500/50 rounded-lg flex flex-col items-center">
-                        <span className="text-[9px] text-slate-400 mb-1">현재 적용된 필터와 인식 결과 화면입니다</span>
+                        <span className="text-[9px] text-slate-400 mb-1">흰색으로 표시되는 셀이 블록으로 인식된 곳입니다</span>
                         <canvas ref={debugCanvasRef} className="max-w-[200px] h-auto rounded border border-slate-700" />
                       </div>
                     )}
