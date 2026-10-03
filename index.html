@@ -39,7 +39,7 @@
           box-shadow: 0 0 0 0 rgba(252, 211, 77, 0.9);
         }
         50% {
-          box-shadow: 0 0 0 4px rgba(252, 211, 77, 0.3);
+          box-shadow: 0 0 0 4px rgba(252, 211, 77, 0.35);
         }
       }
       .just-placed-highlight {
@@ -71,7 +71,7 @@
         { id: 14, name: '8칸', size: 8, shape: [[1, 1, 1], [1, 0, 1], [1, 1, 1]] },
         { id: 15, name: '8칸', size: 8, shape: [[1, 1], [0, 1], [1, 1], [1, 0], [1, 1]] },
         { id: 16, name: '8칸', size: 8, shape: [[1, 1], [1, 0], [1, 1], [1, 0], [1, 1]] },
-        { id: 17, name: '9칸', size: 9, shape: [[0, 0, 1, 0, 0], [1, 1, 1, 1, 1], [0, 1, 0, 1, 0], [0, 0, 1, 0, 0]] },
+        { id: 17, name: '9칸', size: 9, shape: [[0, 0, 1, 0, 0], [1, 1, 1, 1, 1], [0, 1, 0, 1, 0], [0, 0, 1, 0, 0]] }, // 9칸 오리지널 정밀 수정
         { id: 18, name: '10칸', size: 10, shape: [[1, 0, 1], [1, 1, 1], [1, 0, 1], [1, 1, 1]] },
         { id: 19, name: '10칸', size: 10, shape: [[1, 0, 1], [1, 1, 1], [1, 1, 1], [1, 0, 1]] }
       ];
@@ -120,6 +120,7 @@
       function App() {
         const [board, setBoard] = useState(() => Array(TOTAL_CELLS).fill(0));
         const [lastPlacedIndices, setLastPlacedIndices] = useState([]);
+        const [placedReport, setPlacedReport] = useState([]); // 배치 히스토리 리포트
         const [placedBlocksCount, setPlacedBlocksCount] = useState(0);
         const [clearedLinesCount, setClearedLinesCount] = useState(0);
         const [manualMode, setManualMode] = useState(true);
@@ -135,18 +136,20 @@
             {
               board: [...board],
               lastPlacedIndices: [...lastPlacedIndices],
+              placedReport: [...placedReport],
               placedBlocksCount,
               clearedLinesCount,
               selectedBlockIds: [...selectedBlockIds]
             }
           ]);
-        }, [board, lastPlacedIndices, placedBlocksCount, clearedLinesCount, selectedBlockIds]);
+        }, [board, lastPlacedIndices, placedReport, placedBlocksCount, clearedLinesCount, selectedBlockIds]);
 
         const handleUndo = useCallback(() => {
           if (history.length === 0) return;
           const lastState = history[history.length - 1];
           setBoard(lastState.board);
           setLastPlacedIndices(lastState.lastPlacedIndices || []);
+          setPlacedReport(lastState.placedReport || []);
           setPlacedBlocksCount(lastState.placedBlocksCount);
           setClearedLinesCount(lastState.clearedLinesCount);
           setSelectedBlockIds(lastState.selectedBlockIds);
@@ -175,6 +178,7 @@
           saveHistory();
           setBoard(Array(TOTAL_CELLS).fill(0));
           setLastPlacedIndices([]);
+          setPlacedReport([]);
           setPlacedBlocksCount(0);
           setClearedLinesCount(0);
           setSelectedBlockIds([]);
@@ -230,6 +234,7 @@
               let totalClearedLines = 0;
               let successfullyPlaced = 0;
               let newPlacedIndices = [];
+              let stepReports = [];
 
               const chosenBlocks = selectedBlockIds
                 .map(id => {
@@ -316,7 +321,7 @@
                 }
 
                 const score = (cleared * 10000) - (holes * 50) + bottomDensity + (startR * 10);
-                return { nextGrid, cleared, score, finalPlacedIndices };
+                return { nextGrid, cleared, score, finalPlacedIndices, startR, startC, shape };
               };
 
               for (let i = 0; i < chosenBlocks.length; i++) {
@@ -330,10 +335,10 @@
                   for (let r = 0; r <= BOARD_ROWS - shape.length; r++) {
                     for (let c = 0; c <= BOARD_COLS - shape[0].length; c++) {
                       if (canPlace(workingBoard, shape, r, c)) {
-                        const { nextGrid, cleared, score, finalPlacedIndices } = evaluateAndSimulate(workingBoard, shape, r, c, blockMarker);
-                        if (score > maxScore) {
-                          maxScore = score;
-                          bestMove = { nextGrid, cleared, finalPlacedIndices };
+                        const res = evaluateAndSimulate(workingBoard, shape, r, c, blockMarker);
+                        if (res.score > maxScore) {
+                          maxScore = res.score;
+                          bestMove = res;
                         }
                       }
                     }
@@ -345,12 +350,21 @@
                   totalClearedLines += bestMove.cleared;
                   successfullyPlaced++;
                   newPlacedIndices = [...newPlacedIndices, ...bestMove.finalPlacedIndices];
+                  stepReports.push({
+                    order: i + 1,
+                    name: block.name,
+                    shape: bestMove.shape,
+                    row: bestMove.startR + 1,
+                    col: bestMove.startC + 1,
+                    cleared: bestMove.cleared
+                  });
                 }
               }
 
               if (successfullyPlaced > 0) {
                 setBoard(workingBoard);
                 setLastPlacedIndices(newPlacedIndices);
+                setPlacedReport(stepReports);
                 setPlacedBlocksCount(prev => prev + successfullyPlaced);
                 setClearedLinesCount(prev => prev + totalClearedLines);
                 setSelectedBlockIds([]);
@@ -374,7 +388,7 @@
                 한글 모아모아 퍼즐 솔버
               </h1>
               <p className="text-xs sm:text-sm text-slate-400 mt-1">
-                가로 10칸 x 세로 16칸 정밀 맵 반영 완료
+                가로 10칸 맵 + 중력 없음 + 방금 놓은 블록 하라이트/리포트 반영
               </p>
             </header>
 
@@ -421,6 +435,30 @@
                     })}
                   </div>
                 </div>
+
+                {/* 방금 배치된 블록 가이드 리포트 오버레이 */}
+                {placedReport.length > 0 && (
+                  <div className="w-full mt-3 p-3 bg-slate-900/90 border border-amber-500/40 rounded-xl">
+                    <span className="text-xs font-bold text-amber-300 flex items-center gap-1 mb-2">
+                      📍 방금 설치된 블록 좌표 & 모양
+                    </span>
+                    <div className="grid grid-cols-3 gap-2">
+                      {placedReport.map((rpt, idx) => (
+                        <div key={idx} className="bg-slate-800/90 border border-slate-700 rounded-lg p-2 flex flex-col items-center">
+                          <span className="text-[10px] font-extrabold text-pink-400 mb-1">#{rpt.order} {rpt.name}</span>
+                          <div className="grid gap-0.5 my-1" style={{ gridTemplateColumns: `repeat(${rpt.shape[0].length}, minmax(0, 1fr))` }}>
+                            {rpt.shape.map((row, r) =>
+                              row.map((cell, c) => (
+                                <div key={`${r}-${c}`} className={`w-2 h-2 rounded-[1px] ${cell === 1 ? 'bg-amber-300' : 'bg-transparent'}`} />
+                              ))
+                            )}
+                          </div>
+                          <span className="text-[9px] text-slate-300 font-mono mt-1">({rpt.row}행, {rpt.col}열)</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <div className="w-full grid grid-cols-2 gap-3 mt-4">
                   <button
