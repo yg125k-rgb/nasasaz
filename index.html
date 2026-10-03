@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>한글 모아모아 퍼즐 솔버 - 파티클 오인식 방지 버전</title>
+    <title>한글 모아모아 퍼즐 솔버 - 아이템 블록 보호 모드</title>
 
     <!-- React 18 & ReactDOM -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
@@ -82,6 +82,7 @@
       const CELL_STYLES = {
         0: { bg: 'bg-[#18202c] hover:bg-[#28384f]', text: '' },
         1: { bg: 'bg-slate-500 border border-slate-300', text: '' },
+        9: { bg: 'bg-gradient-to-br from-amber-400 to-orange-600 border border-amber-200 ring-2 ring-amber-300', text: '★', textColor: 'text-slate-950 font-black' }, // 아이템 블록 (값 9)
         2: { bg: 'bg-gradient-to-br from-pink-500 to-rose-600 border border-pink-300/50', text: '1', textColor: 'text-white font-extrabold' },
         3: { bg: 'bg-gradient-to-br from-emerald-500 to-teal-600 border border-emerald-300/50', text: '2', textColor: 'text-white font-extrabold' },
         4: { bg: 'bg-gradient-to-br from-purple-500 to-indigo-600 border border-indigo-300/50', text: '3', textColor: 'text-white font-extrabold' },
@@ -133,6 +134,7 @@
       function App() {
         const [board, setBoard] = useState(() => Array(TOTAL_CELLS).fill(0));
         const [manuallyModifiedCells, setManuallyModifiedCells] = useState(() => new Set());
+        const [itemBlockCells, setItemBlockCells] = useState(() => new Set()); // 사용자가 지정한 아이템 블록 위치
         const [lastPlacedIndices, setLastPlacedIndices] = useState([]);
         const [placedGhostOverlay, setPlacedGhostOverlay] = useState({});
         const [placedReport, setPlacedReport] = useState([]);
@@ -328,14 +330,11 @@
           return imageData;
         };
 
-        // --- 파티클 광채 및 맨 아랫줄 오인식 원천 차단형 판별 함수 ---
         const isCellFilledBlock = (ctx, cx, cy, cellW, cellH, rowIndex) => {
-          // 1. 맨 아랫줄(16행)은 무조건 빈 칸(배경)으로 처리
           if (rowIndex === BOARD_ROWS - 1) {
             return false;
           }
 
-          // 셀 내부를 촘촘히 샘플링 (중앙 및 주변부 골고루 검사)
           const halfW = Math.max(2, Math.floor(cellW * 0.3));
           const halfH = Math.max(2, Math.floor(cellH * 0.3));
           const x = Math.floor(cx - halfW);
@@ -349,7 +348,7 @@
           let sum = 0;
           let minLum = 255;
           let maxLum = 0;
-          let highBrightCount = 0; // 극단적으로 밝은 파티클 픽셀 카운트
+          let highBrightCount = 0;
           let count = data.length / 4;
 
           for (let i = 0; i < data.length; i += 4) {
@@ -363,12 +362,10 @@
           const lumRange = maxLum - minLum;
           const highBrightRatio = highBrightCount / count;
 
-          // 💡 파티클 필터: 일부분만 극도로 밝고(고휘도 픽셀 비율이 5%~40% 사이) 전체적으로는 어두운 불꽃 파티클은 차단
           if (highBrightRatio > 0.03 && highBrightRatio < 0.45 && avgLum < 120) {
             return false;
           }
 
-          // 일반적인 은빛 블록 판정 기준
           if (avgLum > 115 || (avgLum > 65 && lumRange > 50)) {
             return true;
           }
@@ -441,7 +438,8 @@
               for (let c = 0; c < BOARD_COLS; c++) {
                 const idx = r * BOARD_COLS + c;
                 
-                if (manuallyModifiedCells.has(idx)) continue;
+                // 수동 수정되었거나 아이템 블록으로 지정된 셀은 자동 감지 변경에서 보호
+                if (manuallyModifiedCells.has(idx) || itemBlockCells.has(idx)) continue;
 
                 const centerX = Math.floor(startX + c * cellW + cellW / 2);
                 const centerY = Math.floor(startY + r * cellH + cellH / 2);
@@ -464,7 +462,7 @@
             }
             return nextBoard;
           });
-        }, [cropRect, isGrayscale, brightness, contrast, gamma, manuallyModifiedCells]);
+        }, [cropRect, isGrayscale, brightness, contrast, gamma, manuallyModifiedCells, itemBlockCells]);
 
         useEffect(() => {
           let intervalId = null;
@@ -484,6 +482,7 @@
             {
               board: [...board],
               manuallyModifiedCells: new Set(manuallyModifiedCells),
+              itemBlockCells: new Set(itemBlockCells),
               lastPlacedIndices: [...lastPlacedIndices],
               placedGhostOverlay: { ...placedGhostOverlay },
               placedReport: [...placedReport],
@@ -493,13 +492,14 @@
               rerollCount
             }
           ]);
-        }, [board, manuallyModifiedCells, lastPlacedIndices, placedGhostOverlay, placedReport, placedBlocksCount, clearedLinesCount, selectedBlockIds, rerollCount]);
+        }, [board, manuallyModifiedCells, itemBlockCells, lastPlacedIndices, placedGhostOverlay, placedReport, placedBlocksCount, clearedLinesCount, selectedBlockIds, rerollCount]);
 
         const handleUndo = useCallback(() => {
           if (history.length === 0) return;
           const lastState = history[history.length - 1];
           setBoard(lastState.board);
           setManuallyModifiedCells(new Set(lastState.manuallyModifiedCells || []));
+          setItemBlockCells(new Set(lastState.itemBlockCells || []));
           setLastPlacedIndices(lastState.lastPlacedIndices || []);
           setPlacedGhostOverlay(lastState.placedGhostOverlay || {});
           setPlacedReport(lastState.placedReport || []);
@@ -512,9 +512,13 @@
           setMessage('이전 상태로 되돌렸습니다.');
         }, [history]);
 
+        // 셀 클릭 시: 순환 방식 (빈칸(0) -> 일반블록(1) -> 아이템블록(9) -> 빈칸(0))
         const handleCellClick = (index) => {
           if (clickMode === 'OFF') return;
           saveHistory();
+
+          const curVal = board[index];
+          let nextVal = 0;
 
           setManuallyModifiedCells(prev => {
             const next = new Set(prev);
@@ -522,9 +526,24 @@
             return next;
           });
 
+          setItemBlockCells(prev => {
+            const next = new Set(prev);
+            if (curVal === 0) {
+              nextVal = 1;
+              next.delete(index);
+            } else if (curVal === 1) {
+              nextVal = 9; // 아이템 블록으로 지정
+              next.add(index);
+            } else {
+              nextVal = 0; // 빈칸으로 초기화
+              next.delete(index);
+            }
+            return next;
+          });
+
           setBoard(prevBoard => {
             const nextBoard = [...prevBoard];
-            nextBoard[index] = nextBoard[index] === 1 ? 0 : 1;
+            nextBoard[index] = nextVal;
             return nextBoard;
           });
           setLastPlacedIndices(prev => prev.filter(i => i !== index));
@@ -534,6 +553,7 @@
           saveHistory();
           setBoard(Array(TOTAL_CELLS).fill(0));
           setManuallyModifiedCells(new Set());
+          setItemBlockCells(new Set());
           setLastPlacedIndices([]);
           setPlacedGhostOverlay({});
           setPlacedReport([]);
@@ -598,10 +618,25 @@
             });
           });
 
-          setBoard(Array.from(grid));
+          // 아이템 블록(값 9) 위치는 자동 배치 결과나 줄 삭제 시에도 보존되도록 병합 처리
+          const nextBoardArr = Array.from(grid);
+          const nextItemCells = new Set(itemBlockCells);
+
+          itemBlockCells.forEach(idx => {
+            // 해당 위치의 줄이 삭제되지 않았다면 아이템 블록 유지
+            if (nextBoardArr[idx] !== 0) {
+              nextBoardArr[idx] = 9;
+            } else {
+              nextItemCells.delete(idx); // 줄 삭제로 인해 파괴된 경우
+            }
+          });
+
+          setBoard(nextBoardArr);
+          setItemBlockCells(nextItemCells);
+
           setManuallyModifiedCells(prev => {
             const next = new Set(prev);
-            grid.forEach((val, idx) => {
+            nextBoardArr.forEach((val, idx) => {
               if (val > 0) next.add(idx);
               else next.delete(idx);
             });
@@ -728,7 +763,9 @@
           const permutations = getPermutations(inputBlocks);
           let bestResult = null;
           let maxTotalScore = -Infinity;
-          const currentGrid = new Int32Array(board);
+          
+          // 기존 보드에서 아이템 블록(값 9)을 일반 블록(값 1)과 동일하게 취급하여 충돌 검사
+          const currentGrid = new Int32Array(board.map(v => (v === 9 ? 1 : v)));
 
           for (const blockOrder of permutations) {
             let candidates = [{ grid: currentGrid, steps: [], score: 0, cleared: 0 }];
@@ -798,7 +835,7 @@
           } else {
             setMessage('선택한 블록을 배치할 수 있는 자리가 없습니다. 교체하는 것을 추천합니다.');
           }
-        }, [selectedBlockIds, blocks, board, rerollCount]);
+        }, [selectedBlockIds, blocks, board, rerollCount, itemBlockCells]);
 
         const handleUseRerollOnly = () => {
           if (rerollCount <= 0) return;
@@ -866,8 +903,8 @@
                   <div className="flex items-center gap-2">
                     <span className="text-lg">✨</span>
                     <div>
-                      <span className="font-extrabold text-xs sm:text-sm text-indigo-300">파티클 오인식 방지 모드 (Anti-Particle)</span>
-                      <p className="text-[10px] text-slate-400">아이콘 주변의 불꽃 파티클이 빈칸을 오인식하는 현상을 원천 차단합니다.</p>
+                      <span className="font-extrabold text-xs sm:text-sm text-indigo-300">아이템 블록 고정 보호 모드</span>
+                      <p className="text-[10px] text-slate-400">클릭하여 지정한 아이템 블록(★)은 삭제 전까지 유지되며, 줄 삭제 시에만 파괴됩니다.</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -979,7 +1016,7 @@
                   <div className="board-grid-wrapper my-1">
                     <div className="board-grid-container">
                       {board.map((cellValue, idx) => {
-                        const style = CELL_STYLES[cellValue];
+                        const style = CELL_STYLES[cellValue] || CELL_STYLES[0];
                         const isJustPlaced = lastPlacedIndices.includes(idx);
                         const ghostMarker = placedGhostOverlay[idx];
                         const isManuallyModified = manuallyModifiedCells.has(idx);
@@ -1233,7 +1270,7 @@
         );
       }
 
-      ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+      ReactDOM.createRoot(getElementById('root')).render(<App />);
     </script>
   </body>
 </html>
